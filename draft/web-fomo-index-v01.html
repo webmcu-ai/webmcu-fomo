@@ -1,0 +1,2325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>XIAO ML Kit FOMO Object Detection over WebSerial. v016</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+table td, table th { padding: 10px; }
+
+/* ── Flash Firmware Section ── */
+.myFlashOption { border:1px solid #aaa; border-radius:5px; padding:14px; margin-bottom:12px; cursor:pointer; transition:border-color .2s,background .2s; }
+.myFlashOption:hover { border-color:#0088cc; }
+.myFlashOption.myFlashSel { border-color:#0088cc; background:rgba(0,136,204,.06); }
+.myFlashOption h3 { font-size:.95rem; color:#0055aa; margin:0 0 6px 0; }
+.myFlashOption p { font-size:.82rem; color:#555; line-height:1.5; margin:0 0 10px 0; }
+.myFlashFrow { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.myFlashFlbl { font-size:.75rem; color:#666; width:120px; flex-shrink:0; }
+.myFlashFrow input[type=file] { flex:1; font-size:.78rem; }
+.myFlashFrow input[type=text] { width:80px; font-size:.78rem; }
+.myProgWrap { height:8px; background:#ddd; border-radius:4px; margin:8px 0; overflow:hidden; display:none; }
+.myProgBar { height:100%; background:#0088cc; width:0%; transition:width .2s; }
+
+/* ── SD Browser ── */
+.mySdList { border:1px solid #ccc; border-radius:4px; min-height:80px; max-height:240px; overflow-y:auto; background:#fafafa; font-family:monospace; font-size:0.82em; }
+.mySdEntry { display:flex; align-items:center; gap:8px; padding:5px 10px; border-bottom:1px solid #eee; cursor:pointer; user-select:none; }
+.mySdEntry:hover { background:#e8f4ff; }
+.mySdEntry.mySdSelected { background:#cce8ff; }
+.mySdEntryDir .mySdName { color:#885500; }
+.mySdName { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mySdSize { color:#888; font-size:0.75em; flex-shrink:0; }
+.mySdBreadcrumb { font-family:monospace; font-size:0.82em; padding:4px 6px; background:#f0f0f0; border-radius:3px; margin-bottom:4px; }
+.mySdBcItem { color:#0055aa; cursor:pointer; }
+.mySdBcItem:hover { text-decoration:underline; }
+
+/* ── FOMO overlay canvas ── */
+#myFomoOverlay { position:absolute; top:0; left:0; pointer-events:none; }
+
+/* ── FOMO detection display ── */
+.myFomoBar { height:18px; background:#ddd; border-radius:3px; margin:2px 0; overflow:hidden; }
+.myFomoBarFill { height:100%; background:#0088cc; transition:width .15s; }
+.myFomoClassRow { display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+.myFomoClassLabel { width:90px; font-size:.82em; overflow:hidden; text-overflow:ellipsis; }
+.myFomoClassConf { width:38px; font-size:.82em; text-align:right; }
+
+/* ── Detection count sparkline ── */
+#myDetectionChart { border:1px solid #ccc; display:block; background:#111; }
+
+/* ── class capture rows ── */
+.myClassRow { border:1px solid #dde; border-radius:4px; padding:8px 10px; margin-bottom:6px; background:#f9faff; }
+</style>
+</head>
+<body>
+<h1 align=center>XIAO ML Kit FOMO Object Detection over WebSerial. v016</h1>
+<p>Train a FOMO (Faster Objects, More Objects) model in the browser · Export weights to ESP32 SD card · WebSerial ESP32 camera capture · Flash firmware from browser</p>
+<p>FOMO uses a spatial sigmoid map head: Conv2D → Pool → Conv2D → 1×1 Conv (sigmoid) → GlobalAvgPool. Detects object locations without bounding-box regression.</p>
+<p>Base github: <a href="https://github.com/webmcu-ai/webmcu-fomo-web">github.com/webmcu-ai/webmcu-fomo-web</a></p>
+<p>Annotations format: <code>/images/ClassName/annotations.json</code> — keys are filenames, values are arrays of <code>{x1,y1,x2,y2}</code> objects (normalised 0–1). Background class (index 0) needs no annotations.</p>
+<br><hr><br>
+
+<div id="myCodeSpace">
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 1 — FLASH FIRMWARE
+  Uses esptool-js v0.5.7 to flash compiled .bin files directly from
+  the browser over WebSerial — no extra software needed.
+═══════════════════════════════════════════════════════════════════ -->
+<h2>1 · Flash Firmware</h2>
+<p>Flash compiled ESP32 .bin files directly from the browser using <b>esptool-js v0.5.7</b>.<br>
+Requires Chrome/Edge · HTTPS or localhost · USB CDC On Boot: Enabled</p>
+<p>If you want to look at the code and load the sketch onto your Arduino IDE it is here in text form <a href="firmware.ino">firmware.ino</a></p>
+<div style="border-left:3px solid #f90; padding:6px 12px; background:#fffbe6; margin-bottom:14px; font-size:.85rem; color:#664400;">
+<b>⚠ MUST REFRESH WEBPAGE FIRST</b> before flashing (clears previous WebSerial state),
+then unplug and replug the ESP32 after flash completes.
+</div>
+
+<!-- Option A -->
+<div class="myFlashOption myFlashSel" id="myOptA" onclick="mySelFlash('A')">
+  <h3>▸ Option A — Sketch Only (flash.ino.bin)</h3>
+  <p>Flashes only the application partition at 0x10000. Fast. Preserves bootloader and NVS.<br>
+  Use when the bootloader is already on the device (standard re-flash).</p>
+  <div id="myInputsA">
+    <div class="myFlashFrow">
+      <span class="myFlashFlbl">Browse (optional)</span>
+      <input type="file" id="myFSketch" accept=".bin">
+      <input type="text" id="myASketch" value="0x10000">
+    </div>
+    <div style="font-size:.75rem; color:#666; margin-top:4px;">Default auto-loaded: <b>flash.ino.bin</b> · Browse to override</div>
+  </div>
+</div>
+
+<!-- Option B -->
+<div class="myFlashOption" id="myOptB" onclick="mySelFlash('B')">
+  <h3>▸ Option B — Full Merged Flash (flash.ino.merged.bin)</h3>
+  <p>Flashes a single merged binary: bootloader + partition table + app at 0x0.<br>
+  Use for fresh chips or after partition changes.</p>
+  <div id="myInputsB" style="display:none;">
+    <div class="myFlashFrow">
+      <span class="myFlashFlbl">Browse (optional)</span>
+      <input type="file" id="myFMerged" accept=".bin">
+      <input type="text" id="myAMerged" value="0x0">
+    </div>
+    <div style="font-size:.75rem; color:#666; margin-top:4px;">Default auto-loaded: <b>flash.ino.merged.bin</b> · Browse to override</div>
+  </div>
+</div>
+
+<div class="myProgWrap" id="myProgWrap"><div class="myProgBar" id="myProgBar"></div></div>
+<button onclick="myFlashFw()" style="font-weight:bold; font-size:1rem; padding:8px 20px;">⚡ Flash Device</button>
+<div id="myFlashSts" style="font-size:.82rem; color:#555; margin-top:8px; min-height:16px;"></div>
+<details style="font-size:.8rem; color:#555; margin-top:8px;">
+  <summary style="cursor:pointer; color:#0055aa;">ℹ Locating .bin files in Arduino IDE 2.x</summary>
+  <div style="padding:8px 0 0 10px; line-height:1.8;">
+    Enable: <i>File → Preferences → Show verbose output during: compilation</i><br>
+    The build path is printed at the end of the compilation log.<br><br>
+    <b>Option A</b> — Sketch only: <code>YourSketch.ino.bin</code> → 0x10000<br>
+    <b>Option B</b> — Merged: <code>YourSketch.ino.merged.bin</code> → 0x0
+  </div>
+</details>
+<br><br>
+
+<table border=1>
+<tr><td>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 2 — ESP32 WEBSERIAL + SD BROWSER
+═══════════════════════════════════════════════════════════════════ -->
+<div id="mySerialTile" style="position:relative; border:1px solid black; background:white; display:flex; flex-direction:column; overflow:hidden;">
+<div onmousedown="myStartDragging(event,'mySerialTile')" style="background:#ccc; cursor:move; user-select:none; padding:5px; font-weight:bold;">
+<h2>2 · ESP32 WebSerial &amp; SD Browser</h2>
+<p>Connect your XIAO ESP32S3 Sense via USB · requires Chrome/Edge · USB CDC On Boot: Enabled</p>
+<div id="mySerialStatus" style="font-weight:bold;">Not Connected</div>
+<br>
+<button onclick="myConnectSerial()">Connect ESP32</button>
+<button onclick="myDisconnectSerial()">Disconnect</button>
+<br><br>
+<label>Send command:</label>
+<input type="text" id="mySerialCmd" placeholder="type command + Enter" onkeydown="if(event.key==='Enter') mySendSerialLine()">
+<button onclick="mySendSerialLine()">Send</button>
+<br>
+<small>
+  <button onclick="mySendSerialChar('t')" title="Next menu item">t=Next</button>
+  <button onclick="mySendSerialChar('l')" title="Select/Unselect menu item">l=Select/Unselect</button>
+  <button onclick="mySendSerialChar('1')">1=Collect0</button>
+  <button onclick="mySendSerialChar('2')">2=Collect1</button>
+  <button onclick="mySendSerialChar('3')">3=Train</button>
+  <button onclick="mySendSerialChar('4')">4=Infer</button>
+</small>
+<br>
+<div id="myDynamicSerialButtons" style="margin-top:4px;"></div>
+<br><br>
+<b>Serial Monitor</b><br>
+<pre id="mySerialLog" style="height:160px; overflow-y:auto; font-family:monospace; background:#1e1e1e; color:#d4d4d4; padding:6px; font-size:0.82em; margin:0; border:1px solid #555; border-radius:3px; resize:vertical; white-space:pre-wrap; word-break:break-all;">Serial output will appear here...
+</pre>
+<button onclick="document.getElementById('mySerialLog').textContent='Serial output will appear here...\n'">Clear Log</button>
+<button onclick="navigator.clipboard.writeText(document.getElementById('mySerialLog').textContent).then(()=>myLog('Copied')).catch(e=>myLog('Copy failed: '+e.message))">📋 Copy Log</button>
+<label><input type="checkbox" id="mySerialAutoScroll" checked> Auto-scroll</label>
+<br><br>
+</div>
+<div onmousedown="myStartResizing(event,'mySerialTile')" title="Drag to resize" style="position:absolute; bottom:0; right:0; width:18px; height:18px; cursor:nwse-resize; display:flex; align-items:flex-end; justify-content:flex-end; line-height:1; font-size:14px; color:#888; user-select:none;">⊿</div>
+</div>
+
+</td><td>
+
+<!-- ── SD Browser ── -->
+<b>SD Card Browser</b>
+<p>Browse, view, and delete files on the ESP32 SD card.</p>
+<div class="mySdBreadcrumb" id="mySdBreadcrumb">
+  <span class="mySdBcItem" onclick="mySdNavigate('/')">/ (root)</span>
+</div>
+<div class="mySdList" id="mySdList">
+  <div style="padding:12px; color:#888;">Connect ESP32 then press Refresh to browse SD card</div>
+</div>
+<br>
+<button onclick="mySdRefresh()">⟳ Refresh</button>
+<button id="mySdDeleteBtn" style="display:none;" onclick="mySdDeleteSelected()">🗑 Delete Selected</button>
+<button onclick="mySdGoUp()">↑ Up</button>
+
+<!-- SD File Viewer -->
+<div id="mySdViewer" style="margin-top:8px; display:none;">
+  <b id="mySdViewerName" style="font-family:monospace;">—</b><br>
+  <img id="mySdViewerImg" style="max-width:240px; display:none; border:1px solid #ccc; margin-top:4px;" alt="SD image preview">
+  <textarea id="mySdViewerText" rows="8" cols="60" style="display:none; font-family:monospace; font-size:0.8em;" spellcheck="false"></textarea>
+  <br>
+  <button id="mySdSaveTextBtn" style="display:none;" onclick="mySdSaveTextFile()">💾 Save changes to SD</button>
+  <button id="mySdDownloadBtn" style="display:none;" onclick="mySdDownloadFile()">↓ Download to PC</button>
+</div>
+
+<br>
+<b>Sync config from SD card</b><br>
+<p>Read /header/config.json from SD and update all fields including class names.</p>
+<button onclick="mySdReadConfig()">⟳ Refresh config.json from SD</button>
+<br><br>
+
+</td></tr>
+<tr><td>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 3 — FILE & SD TRANSFER
+  (TFJS model save/load, config load, weights load, bulk image transfer)
+═══════════════════════════════════════════════════════════════════ -->
+<h2>3 · File &amp; SD Transfer</h2>
+
+<div style="border:1px solid #bbd; border-radius:4px; padding:10px 14px; margin-bottom:10px; background:#f4f8ff;">
+  <b>📁 PC Project Folder</b>
+  <span id="myFolderStatus" style="margin-left:10px; font-size:0.85em; color:#888;">None — images held in RAM only</span><br>
+  <small style="color:#555;">Pick a <b>project root</b> folder — mirrors SD card structure exactly:
+  <code>root/images/ClassName/</code> and <code>root/header/</code> are created automatically.</small><br><br>
+  <button onclick="myPickSaveFolder()">📂 Choose Project Folder</button>
+  <button onclick="myForgetSaveFolder()" id="myForgetFolderBtn" style="display:none;">✕ Forget</button>
+  <button onclick="myPickAndLoadFolder()" title="Load images from existing project folder">📂 Load images from folder</button>
+  <button onclick="myLoadModelFromFolder()" title="Load myWeights.bin from project folder/header/">📂 Load model from folder</button>
+</div>
+
+<label>RAM window per class (max images in training buffer):</label>
+<input type="number" id="myMaxBufferInput" value="2000" min="5" max="50000" onchange="myUpdateMaxBuffer()">
+<span id="myRamHint" style="font-size:0.82em; color:#666; margin-left:8px;"></span>
+
+<br><br>
+<button onclick="mySaveModel()">Save TFJS Model</button>
+<button onclick="myLoadModel()">Load TFJS Model</button>
+<button onclick="myLoadWeightsBinFromSd()">Load myWeights.bin from SD</button>
+<br><br>
+
+<!-- ── Big green save-both button ── -->
+<button onclick="mySaveBothToSd()" style="background:#2a7; color:#fff; font-weight:bold; padding:8px 18px; font-size:.95rem; border:none; border-radius:4px; cursor:pointer;">
+  💾 Save config.json + myWeights.bin → SD /header/
+</button>
+<span id="mySaveBothStatus" style="font-size:.82em; color:#555; margin-left:10px;"></span>
+<br><br>
+
+<!-- ── Bulk image transfer ── -->
+<div style="border:1px solid #cdc; border-radius:4px; padding:8px 12px; background:#f4fff4; margin-bottom:10px;">
+  <b>📤 Bulk Image Transfer to SD</b><br>
+  <small style="color:#555;">Sends all images from browser RAM to SD card <code>/images/ClassName/</code>.
+  <b>Stop ESP32 streaming first.</b></small><br><br>
+  <select id="myXferClassSelect">
+    <option value="all">All Classes</option>
+    <option value="0">Class 0 only</option>
+    <option value="1">Class 1 only</option>
+  </select>
+  <button onclick="myXferImagesToSd()">📤 Transfer Images to SD</button>
+  <span id="myXferStatus" style="font-size:.82em; color:#555; margin-left:8px;"></span>
+</div>
+
+<!-- ── Validation snapshot ── -->
+<label>Validation %:
+  <select id="myValidationPct" onchange="myUpdateValBox()">
+    <option value="0">0% (no validation)</option>
+    <option value="5" selected>5%</option>
+    <option value="10">10%</option>
+    <option value="15">15%</option>
+    <option value="20">20%</option>
+  </select>
+</label>
+<span id="myValBox" style="font-size:.82em; color:#555; margin-left:8px;"></span>
+<button onclick="mySnapshotValidationImages()">📷 Snapshot Validation Set</button>
+<br><br>
+
+</td><td>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 4 — CAMERA & DATA COLLECTION (FOMO)
+  Camera tile + FOMO overlay canvas for live detection boxes/dots
+═══════════════════════════════════════════════════════════════════ -->
+<div id="myCamTile" style="position:relative; border:1px solid black; background:white; display:flex; flex-direction:column; overflow:hidden;">
+<div onmousedown="myStartDragging(event,'myCamTile')" style="background:#ccc; cursor:move; user-select:none; padding:5px; font-weight:bold;">
+<h2>4 · Camera &amp; Data Collection (FOMO)</h2>
+
+<label>Input Resolution:</label>
+<select id="myResolutionSelect" onchange="myOnResolutionSelect()">
+  <option value="64" selected>64×64</option>
+  <option value="96">96×96</option>
+  <option value="112">112×112</option>
+  <option value="128">128×128</option>
+</select>
+<br>
+<div id="myResolutionHint" style="font-size:.82em; color:#555; margin:2px 0 6px 0;">Training resolution: 64×64 — fomoGrid: 29×29</div>
+
+<label>Camera Source:</label>
+<select id="myCameraSelect" title="Select webcam or ESP32 camera via WebSerial"></select>
+<br><br>
+
+<!-- Camera preview with FOMO overlay -->
+<div style="display:inline-block; position:relative;">
+  <video id="myVideo1" width="240" height="240" autoplay playsinline style="display:block; border:1px solid #ccc;"></video>
+  <canvas id="myCanvas1" width="240" height="240" style="display:none; border:1px solid #ccc;"></canvas>
+  <img id="myEspImg" width="240" height="240" style="display:none; border:1px solid #ccc; background:#111;" alt="ESP32 camera">
+  <canvas id="myFomoOverlay" width="240" height="240" style="display:none;"></canvas>
+  <div id="myEspOverlay" style="display:none; position:absolute; top:4px; left:4px; background:rgba(0,0,0,0.55); color:#0cf; font-size:.7em; padding:2px 6px; border-radius:3px;">ESP32 FOMO</div>
+</div>
+<br><br>
+
+<button id="myStartBtn" onclick="myStartAll()">Start Camera &amp; Brain</button>
+<button id="myStopCameraBtn" onclick="myStopCamera()" style="display:none;">Stop Camera</button>
+
+<!-- ESP32 stream controls -->
+<div id="myEspStreamControls" style="display:none; margin-top:8px;">
+  <button onclick="myRequestEspFrame()">📷 Single Frame</button>
+  <button id="myEspStreamBtn" onclick="myToggleEspStream()">▶ Start Stream</button>
+  <label>Interval (ms):</label>
+  <input type="number" id="myEspStreamInterval" value="800" min="200" max="5000" step="100" style="width:70px;">
+</div>
+<br><br>
+
+<!-- FOMO overlay toggle -->
+<label><input type="checkbox" id="myFomoOverlayToggle" checked onchange="myToggleFomoOverlay()"> Show FOMO detection overlay</label>
+<br>
+<label>Detection Threshold (fomoThreshold):
+  <input type="range" id="myFomoThreshSlider" min="0.05" max="0.99" step="0.01" value="0.38"
+         oninput="myOnThreshSlider()">
+  <span id="myFomoThreshVal">0.38</span>
+</label>
+<br>
+<label><input type="checkbox" id="myUseDynamicThresh" checked onchange="myRefreshConfigTextarea()"> Use dynamic threshold (ratio × peak, floor = threshold)</label>
+<br>
+<label>Dynamic threshold ratio:
+  <input type="number" id="myDynThreshRatio" value="0.90" min="0.5" max="1.0" step="0.01" style="width:60px;" onchange="myRefreshConfigTextarea()">
+</label>
+<br><br>
+
+</div>
+<div onmousedown="myStartResizing(event,'myCamTile')" title="Drag to resize" style="position:absolute; bottom:0; right:0; width:18px; height:18px; cursor:nwse-resize; display:flex; align-items:flex-end; justify-content:flex-end; line-height:1; font-size:14px; color:#888; user-select:none;">⊿</div>
+</div>
+
+<!-- ── Dynamic class capture rows ── -->
+<div id="myClassRowsContainer"></div>
+<button onclick="myForceStartTraining()" style="background:#088; color:#fff; font-weight:bold; padding:6px 14px; border:none; border-radius:4px; cursor:pointer; margin-top:8px;">▶ Force Start Training (WebSerial)</button>
+<br>
+
+<p style="font-size:0.82em; color:#555; margin-top:8px;">
+  <b>📷 Capture</b> = grab frame + auto-save to <code>images/ClassName/</code> if folder set ·
+  <b>Load from PC</b> = pick individual files into RAM ·
+  <b>📂 Load from SD</b> = pull from ESP32 SD card ·
+  <b>Clear RAM</b> = free tensors only.
+  <b>FOMO annotations</b>: place <code>annotations.json</code> in <code>/images/ClassName/</code> on SD with bbox data (x1,y1,x2,y2 normalised 0–1). Background class (index 0) needs no annotations.
+</p>
+<br>
+
+</td></tr>
+<tr><td>
+
+<!-- ── Heatmap panel (FOMO has ESP32-side heatmap over conv2 output) ── -->
+<div id="myHeatmapPanel" style="display:none; margin-bottom:10px;">
+  <b>Conv2 Activation Heatmap</b>
+  <span id="myHeatmapDims" style="font-size:0.8em; color:#666; margin-left:8px;"></span><br>
+  <small style="color:#888;">Max activation across all Conv2 filters · blue=low · red=high</small><br>
+  <canvas id="myHeatmapCanvas" width="162" height="162"
+          style="border:1px solid #ccc; margin-top:4px; image-rendering:pixelated;"></canvas><br>
+</div>
+<button id="myHeatmapLiveBtn" onclick="myToggleHeatmapLive()">▶ ESP32 Heatmap</button>
+<small style="color:#888;"> (ESP32 on-device inference · slightly reduces ESP32 FPS)</small>
+<br><br>
+
+<!-- ── Inference display output (GAP bar chart + peak location) ── -->
+<div id="myOutputDisplay" style="min-height:60px;">Ready...</div>
+<br>
+<button id="myStopAnalysisBtn" onclick="myStopAnalysis()" disabled>Stop Analysis</button>
+<button id="myStartAnalysisBtn" onclick="myStartAnalysis()" style="display:none;">Start Analysis</button>
+<button onclick="myDebugCurrentFrame()">Debug Frame</button>
+<br><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 5 — TRAINING CONTROLS (FOMO)
+═══════════════════════════════════════════════════════════════════ -->
+<h2>5 · Training Controls (FOMO)</h2>
+
+Batches Trained: <span id="myEpochDisplay">0</span><br>
+Min Samples: <input type="number" id="myMinSamples" value="10" min="1" max="100">
+<br><br>
+
+<label><input type="checkbox" id="myUseAllData" checked onchange="myToggleEpochMode()"> Use All Data (systematic epochs)</label><br>
+<div id="myEpochControls">
+  <label>Target Epochs:</label>
+  <input type="number" id="myTargetEpochs" value="30" min="0" step="0.5">
+  <p id="myEpochHint"></p>
+</div>
+<div id="myBatchControls" style="display:none;">
+  <label>Max Batches:</label>
+  <input type="number" id="myMaxBatches" value="40" min="0">
+</div>
+
+<label>Batch Size:</label>
+<input type="number" id="myBatchSize" value="12" min="3" max="30" step="3">
+<br>
+<label>Learning Rate:</label>
+<input type="number" id="myLearningRate" value="0.0003" min="0.00001" max="0.01" step="0.0001">
+<br>
+<label>Conv1 Filters:</label>
+<input type="number" id="myConv1Filters" value="4" min="2" max="32" step="2" onchange="myRefreshConfigTextarea()">
+<br>
+<label>Conv2 Filters:</label>
+<input type="number" id="myConv2Filters" value="8" min="4" max="64" step="4" onchange="myRefreshConfigTextarea()">
+<br>
+<label>Num Classes:
+  <select id="myNumClassesSelect" onchange="myOnNumClassesChange()">
+    <option value="2" selected>2</option>
+    <option value="3">3</option>
+    <option value="4">4</option>
+    <option value="5">5</option>
+    <option value="6">6</option>
+    <option value="7">7</option>
+    <option value="8">8</option>
+  </select>
+</label>
+<br>
+<label><input type="checkbox" id="myUseAugmentation" checked onchange="myRefreshConfigTextarea()"> Use Augmentation (random crop on ESP32)</label>
+<br>
+<label>Validation Images per class:
+  <input type="number" id="myValImages" value="5" min="0" max="20" onchange="myRefreshConfigTextarea()">
+</label>
+<br><br>
+
+Avg Loss: <span id="myLossDisplay">--</span><br>
+Status: <span id="myStatusDisplay">Waiting...</span><br><br>
+
+<button id="myPauseBtn" onclick="myPauseTraining()" disabled>Pause</button>
+<button id="myResumeBtn" onclick="myResumeTraining()" style="display:none;">Resume</button>
+<br>
+<div id="myProgressBarWrap" style="height:10px; background:#ccc;">
+  <div id="myProgressBar" style="height:100%; background:green; width:0%;"></div>
+</div>
+<br>
+
+<label><input type="checkbox" id="myAutoSaveWeights"> Auto-save weights every 10 batches</label>
+<br><br>
+
+<!-- FOMO detection count chart (Section 7 evaluation widget) -->
+<h3>Detection Count per Frame (last 60)</h3>
+<canvas id="myDetectionChart" width="400" height="80"></canvas>
+<span id="myDetectionChartLbl" style="font-size:.8em; color:#aaa; display:block; margin-top:2px;"></span>
+<br>
+
+<h3>Activity Log</h3>
+<div id="myDivHistory" style="height:200px; overflow-y:auto; font-family:monospace; background:#eee; padding:8px; font-size:0.85em;">Logs will appear here...</div>
+<button onclick="document.getElementById('myDivHistory').innerHTML=''">Clear Log</button>
+<br>
+
+</td><td>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 6 — ESP32 EXPORT (SD FORMAT)
+═══════════════════════════════════════════════════════════════════ -->
+<h2>6 · ESP32 Export (SD Format)</h2>
+<p>Exports weights + config for the XIAO ESP32S3 Sense. Copy files to SD card /header/ folder.</p>
+
+<label>Firmware Version:</label>
+<input type="number" id="myBinVersion" value="16" min="1" onchange="myRefreshConfigTextarea()">
+<br><br>
+
+<label><input type="checkbox" id="myExportAugmentation" checked onchange="myRefreshConfigTextarea()"> useAugmentation (random crop on ESP32)</label><br>
+<label>validationImages:
+  <input type="number" id="myExportValidationImages" value="5" min="0" max="20" onchange="myRefreshConfigTextarea()">
+</label><br>
+<label>fomoThreshold:
+  <input type="number" id="myExportFomoThreshold" value="0.38" min="0.01" max="0.99" step="0.01" onchange="myRefreshConfigTextarea()">
+</label><br>
+<label><input type="checkbox" id="myExportUseDynamic" checked onchange="myRefreshConfigTextarea()"> useDynamicThreshold</label><br>
+<label>dynamicThresholdRatio:
+  <input type="number" id="myExportDynRatio" value="0.90" min="0.5" max="1.0" step="0.01" onchange="myRefreshConfigTextarea()">
+</label><br>
+<label>dynamicThresholdFloor:
+  <input type="number" id="myExportDynFloor" value="0.38" min="0.01" max="0.99" step="0.01" onchange="myRefreshConfigTextarea()">
+</label>
+<br><br>
+
+<button onclick="myExportBin()">Export myWeights.bin</button>
+<p>Binary: JSON header block + float32 weights (conv1_w, conv1_b, conv2_w, conv2_b, output_w [numClasses×conv2Filters], output_b [numClasses]).<br>
+Copy to SD card <code>/header/myWeights.bin</code>.</p>
+
+<button onclick="myExportWeightsH()">Export myWeights.h</button>
+<p>C header — copy to sketch folder and uncomment <code>#define USE_BAKED_WEIGHTS</code>.</p>
+
+</td><td>
+
+<b>config.json — Direct Download</b><br>
+<p>Live textarea — edit freely before saving. Syncs from fields above.</p>
+<textarea id="myConfigTextarea" rows="30" cols="60" spellcheck="false"></textarea>
+<br>
+<button onclick="myExportConfigJson()">Save config.json to Downloads</button>
+<br><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SECTION 7 — FOMO INFERENCE DISPLAY
+  INFER:<className>,<gapConf>,<peakX>,<peakY>,<peakVal>,<numClusters>
+═══════════════════════════════════════════════════════════════════ -->
+<h2>7 · FOMO Live Inference</h2>
+<p style="font-size:.82em; color:#555;">Updated from ESP32 <code>INFER:</code> token or browser analysis. Format:<br>
+<code>INFER:&lt;className&gt;,&lt;gapConf&gt;,&lt;peakX&gt;,&lt;peakY&gt;,&lt;peakVal&gt;,&lt;numClusters&gt;</code></p>
+
+<!-- Per-class GAP confidence bars -->
+<div id="myFomoGapBars" style="margin-bottom:8px;"></div>
+
+<!-- Peak detection info -->
+<div id="myFomoPeakInfo" style="font-family:monospace; font-size:.85em; background:#f5f5f5; border:1px solid #ccc; padding:6px; border-radius:3px; margin-bottom:8px;">
+  Predicted class: <span id="myFomoPredClass" style="font-weight:bold;">—</span><br>
+  GAP confidence: <span id="myFomoGapConf">—</span><br>
+  Peak location: (<span id="myFomoPeakX">—</span>, <span id="myFomoPeakY">—</span>) grid cell<br>
+  Peak value: <span id="myFomoPeakVal">—</span><br>
+  Clusters found: <span id="myFomoNumClusters" style="font-weight:bold; color:#d44;">—</span><br>
+  Active threshold: <span id="myFomoActiveThr">—</span>
+</div>
+
+<!-- Cluster list (computed from full-image browser inference) -->
+<div id="myFomoClusterList" style="font-family:monospace; font-size:.8em; color:#555;"></div>
+
+</td></tr>
+</table>
+
+<p>
+By <a href="https://github.com/hpssjellis">Jeremy Ellis (hpssjellis)</a> ·
+<a href="https://www.linkedin.com/in/jeremy-ellis-4237a9bb/">LinkedIn</a> ·
+<a href="https://opencollective.com/mlsysbook">Support opencollective/mlsysbook</a> ·
+<a href="https://www.seeedstudio.com/The-XIAOML-Kit.html">XIAO ML Kit</a>
+· Use at your own risk · MIT License
+</p>
+<br><hr><br>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — STATE VARIABLES
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ──────────────────────────────────────────────
+// STATE
+// ──────────────────────────────────────────────
+var myModel, myTimer, myLastID = -1;
+var myNumClasses = 2;
+var myTrainData = {};
+var myRawData   = {};
+var myClassLabels = ['0Blank','1Cup'];
+var myMaxBuffer = 2000;
+var myEpochCount = 0;
+var myLossHistory = [];
+var myLossSum = 0, myLossCount = 0;
+var myTrainingPaused = false;
+var myAnalysisStopped = false;
+var myAllDataIndex = 0;
+var myCurrentEpoch = 0;
+var myShuffledData = [];
+var myCameraStopped = false;
+var myInputSize = 64;
+
+// WebSerial state
+var mySerialPort = null;
+var mySerialReader = null;
+var mySerialWriter = null;
+var mySerialReadLoop = null;
+var mySerialBuffer = '';
+var mySerialConnected = false;
+
+// ESP32 camera state
+var myEspLastFrame = null;
+var myEspLastB64   = null;
+var myEspStreaming  = false;
+var myEspStreamTimer = null;
+var myEspReceivingCam  = false;
+var myEspCamChunks     = [];
+var myEspReceivingJpeg = false;
+var myEspJpegBytes     = [];
+
+// SD browser state
+var mySdCwd = '/';
+var mySdEntries = [];
+var mySdSelectedPath = null;
+var mySdSelectedIsDir = false;
+var mySdCollectList = false;
+var mySdCollectContent = false;
+var mySdContentLines = [];
+var mySdCollectJpeg = false;
+var mySdJpegChunks  = [];
+var mySdContentFile = null;
+var mySdReadingConfig = false;
+var myBinLoadActive = false;
+var myBinLoadLines  = [];
+
+// SD load-for-class state
+var mySdLoadClassId = -1;
+var mySdLoadQueue   = [];
+var mySdLoadOnJpegDone = null;
+var mySdLoadCwd = '/';
+
+// Heatmap state
+var myHeatmapLive    = false;
+var myHeatmapPending = false;
+var myHeatmapGrid    = {rows:0, cols:0};
+
+// Auto-save folder
+var mySaveFolder     = null;
+var myAutoSaveCounters = {};
+var myDiskTotals = {};
+
+// Flash firmware state
+var myFlashMode       = 'A';
+var myFlashSketchFile = 'flash.ino.bin';
+var myFlashMergedFile = 'flash.ino.merged.bin';
+
+// File transfer Promise resolvers (v78 binary protocol)
+var myFileTransferResolve = null;
+var myFileTransferReject  = null;
+
+// FOMO-specific state
+var myFomoThreshold  = 0.38;
+var myFomoHistory    = [];   // detection counts for sparkline (last 60 frames)
+var myFomoGapHistory = [];   // per-class GAP history for browser inference
+var myDetectionChartCtx = null;
+
+// Shared canvas for JPEG decoding — never recreated per frame
+var myEspTempCanvas = document.createElement('canvas');
+myEspTempCanvas.width = 240; myEspTempCanvas.height = 240;
+var myEspTempCtx = myEspTempCanvas.getContext('2d');
+
+// Confusion matrix throttle
+var myConfusionThrottleTimer = null;
+
+// Validation images (snapshotted for eval)
+var myValImages = {0:[], 1:[]};
+
+// FOMO overlay canvas handle
+var myFomoOverlayCanvas = null;
+var myFomoOverlayCtx    = null;
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — RESOLUTION / ARCH HELPERS (mirrors firmware myComputeArchSizes)
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// Mirror firmware myComputeArchSizes() EXACTLY
+function myComputeArchSizes(inputSize, conv1Filters, conv2Filters, numClasses) {
+  var c1o = inputSize - 2;
+  var p1o = Math.floor(c1o / 2);
+  var c2o = p1o - 2;
+  var fg  = c2o;            // fomoGrid
+  var fc  = fg * fg;        // fomoCells
+  var c1w = 3 * 3 * 3 * conv1Filters;
+  var c2w = 3 * 3 * conv1Filters * conv2Filters;
+  var ow  = numClasses * conv2Filters;  // 1×1 conv output weights
+  return { conv1OutputSize: c1o, pool1OutputSize: p1o, conv2OutputSize: c2o,
+           fomoGrid: fg, fomoCells: fc,
+           conv1Weights: c1w, conv2Weights: c2w, outputWeights: ow };
+}
+
+function myGetArchSizes() {
+  var is  = myInputSize;
+  var c1f = parseInt(document.getElementById('myConv1Filters').value) || 4;
+  var c2f = parseInt(document.getElementById('myConv2Filters').value) || 8;
+  var nc  = myNumClasses;
+  return myComputeArchSizes(is, c1f, c2f, nc);
+}
+
+function myUpdateResolutionHint() {
+  var sz  = myInputSize;
+  var a   = myGetArchSizes();
+  var hint = document.getElementById('myResolutionHint');
+  if (!hint) return;
+  var locked = !!myModel;
+  hint.innerHTML = locked
+    ? 'Locked at '+sz+'×'+sz+' — rebuild model to change'
+    : 'Resolution: '+sz+'×'+sz+' — fomoGrid: '+a.fomoGrid+'×'+a.fomoGrid+' — cells: '+a.fomoCells;
+}
+
+function myOnResolutionSelect() {
+  if (myModel) {
+    alert('Resolution is locked once the model is built.\nRefresh the page to change.');
+    return;
+  }
+  var sel = document.getElementById('myResolutionSelect');
+  myInputSize = parseInt(sel.value) || 64;
+  myUpdateResolutionHint();
+}
+
+// Tiling drag/resize helpers
+var myActiveElement = null;
+var myCurrentAction = null;
+var myStartX, myStartY, myStartLeft, myStartTop, myStartWidth, myStartHeight;
+var myMaxZ = 1000;
+
+function myBringToFront(el) { myMaxZ++; el.style.zIndex = myMaxZ; }
+
+function myStartDragging(evt, id) {
+  evt.preventDefault();
+  myActiveElement = document.getElementById(id);
+  myBringToFront(myActiveElement);
+  myCurrentAction = 'drag';
+  myStartX = evt.clientX; myStartY = evt.clientY;
+  myStartLeft = parseInt(myActiveElement.style.left) || 0;
+  myStartTop  = parseInt(myActiveElement.style.top)  || 0;
+  window.onmousemove = myPerformAction;
+  window.onmouseup   = myStopAction;
+}
+
+function myStartResizing(evt, id) {
+  evt.preventDefault();
+  myActiveElement = document.getElementById(id);
+  myBringToFront(myActiveElement);
+  myCurrentAction = 'resize';
+  myStartX = evt.clientX; myStartY = evt.clientY;
+  myStartWidth  = parseInt(myActiveElement.style.width)  || 400;
+  myStartHeight = parseInt(myActiveElement.style.height) || 300;
+  window.onmousemove = myPerformAction;
+  window.onmouseup   = myStopAction;
+}
+
+function myPerformAction(evt) {
+  if (!myActiveElement) return;
+  var dx = evt.clientX - myStartX, dy = evt.clientY - myStartY;
+  if (myCurrentAction === 'drag') {
+    myActiveElement.style.left = (myStartLeft + dx) + 'px';
+    myActiveElement.style.top  = (myStartTop  + dy) + 'px';
+  } else {
+    myActiveElement.style.width  = Math.max(100, myStartWidth  + dx) + 'px';
+    myActiveElement.style.height = Math.max(100, myStartHeight + dy) + 'px';
+  }
+}
+
+function myStopAction() { myActiveElement = null; myCurrentAction = null; window.onmousemove = null; window.onmouseup = null; }
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — GENERAL HELPERS
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+var myRawCanvas = document.createElement('canvas');
+myRawCanvas.width = 240; myRawCanvas.height = 240;
+var myRawCtx = myRawCanvas.getContext('2d');
+
+function myLog(msg) {
+  var div = document.getElementById('myDivHistory');
+  var t = new Date().toLocaleTimeString();
+  div.innerHTML = '<span>['+t+']</span> '+msg+'<br>' + div.innerHTML;
+}
+
+function myUpdateMaxBuffer() {
+  myMaxBuffer = parseInt(document.getElementById('myMaxBufferInput').value) || 100;
+  myLog('RAM window: '+myMaxBuffer+' samples/class');
+  myUpdateRamHint();
+}
+
+function myUpdateRamHint() {
+  var h = document.getElementById('myRamHint');
+  if (!h) return;
+  var total = 0;
+  for (var i = 0; i < myNumClasses; i++) total += (myTrainData[i]||[]).length;
+  h.textContent = total + ' images in RAM across '+myNumClasses+' classes';
+}
+
+function myToggleEpochMode() {
+  var all = document.getElementById('myUseAllData').checked;
+  document.getElementById('myEpochControls').style.display = all ? 'block' : 'none';
+  document.getElementById('myBatchControls').style.display = all ? 'none' : 'block';
+  myUpdateEpochHint();
+}
+
+function myUpdateEpochHint() {
+  if (!document.getElementById('myUseAllData').checked) return;
+  var total = 0;
+  for (var i = 0; i < myNumClasses; i++) total += (myTrainData[i]||[]).length;
+  var bs  = parseInt(document.getElementById('myBatchSize').value) || 12;
+  var bpe = Math.ceil(total / bs);
+  var ep  = parseFloat(document.getElementById('myTargetEpochs').value) || 30;
+  var h   = document.getElementById('myEpochHint');
+  if (h) h.textContent = total > 0
+    ? '~'+bpe+' batches/epoch = '+Math.ceil(ep*bpe)+' total batches'
+    : 'Waiting for training data...';
+}
+
+function toCString(s) {
+  return s.substring(0,20).replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — DYNAMIC CLASS ROWS
+  myRenderClassRows() — always dynamic, numClasses-driven
+  myRenderSerialButtons() — per-class serial shortcuts
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myRenderClassRows() {
+  var container = document.getElementById('myClassRowsContainer');
+  container.innerHTML = '';
+  for (var i = 0; i < myNumClasses; i++) {
+    var label = myClassLabels[i] || ('Class' + i);
+    var div = document.createElement('div');
+    div.className = 'myClassRow';
+    div.id = 'myClassBlock' + i;
+    div.innerHTML =
+      '<b>Class '+i+':</b> '+
+      '<input type="text" id="myLabel'+i+'" value="'+label+'" '+
+      'onchange="myClassLabels['+i+']=this.value; myRefreshConfigTextarea();" style="width:100px;">'+
+      ' <span id="myCount'+i+'" style="margin-left:8px;">0 samples</span>'+
+      '<span id="myDiskCount'+i+'" style="font-size:0.8em; color:#0055aa; margin-left:6px;"></span><br>'+
+      '<button onclick="myCollect('+i+')">📷 Capture</button> '+
+      '<button onclick="myLoadImages('+i+')">Load from PC</button> '+
+      '<button onclick="myLoadFromSd('+i+')" title="Pull images from ESP32 SD /images/ClassName/">📂 Load from SD</button> '+
+      '<button onclick="myClearImages('+i+')">Clear RAM</button>';
+    container.appendChild(div);
+  }
+  // Update xfer class select
+  var sel = document.getElementById('myXferClassSelect');
+  while (sel.options.length > 1) sel.remove(1);
+  for (var i = 0; i < myNumClasses; i++) {
+    var opt = document.createElement('option');
+    opt.value = i;
+    opt.text  = 'Class ' + i + ' only';
+    sel.appendChild(opt);
+  }
+  // Update GAP bars
+  myRenderFomoGapBars();
+  myRefreshConfigTextarea();
+}
+
+function myRenderFomoGapBars() {
+  var bars = document.getElementById('myFomoGapBars');
+  bars.innerHTML = '';
+  for (var i = 0; i < myNumClasses; i++) {
+    var label = myClassLabels[i] || ('Class' + i);
+    var row = document.createElement('div');
+    row.className = 'myFomoClassRow';
+    row.innerHTML =
+      '<span class="myFomoClassLabel" id="myGapLabel'+i+'">'+label+'</span>'+
+      '<div class="myFomoBar" style="flex:1;"><div class="myFomoBarFill" id="myGapFill'+i+'" style="width:0%;"></div></div>'+
+      '<span class="myFomoClassConf" id="myGapPct'+i+'">0%</span>';
+    bars.appendChild(row);
+  }
+}
+
+function myRenderSerialButtons() {
+  var div = document.getElementById('myDynamicSerialButtons');
+  div.innerHTML = '';
+  for (var i = 0; i < myNumClasses; i++) {
+    var btn = document.createElement('button');
+    btn.textContent = (i+1)+'=Collect'+i;
+    btn.onclick = (function(ci){ return function(){ mySendSerialChar(String(ci+1)); }; })(i);
+    div.appendChild(btn);
+  }
+  var btnT = document.createElement('button');
+  btnT.textContent = (myNumClasses+1)+'=Train';
+  btnT.onclick = function(){ mySendSerialChar(String(myNumClasses+1)); };
+  div.appendChild(btnT);
+  var btnI = document.createElement('button');
+  btnI.textContent = (myNumClasses+2)+'=Infer';
+  btnI.onclick = function(){ mySendSerialChar(String(myNumClasses+2)); };
+  div.appendChild(btnI);
+}
+
+function myOnNumClassesChange() {
+  var n = parseInt(document.getElementById('myNumClassesSelect').value) || 2;
+  myReinitClassData(n);
+  myRenderClassRows();
+  myRenderSerialButtons();
+}
+
+function myReinitClassData(n) {
+  myNumClasses = n;
+  while (myClassLabels.length < n) myClassLabels.push('Class'+myClassLabels.length);
+  myClassLabels = myClassLabels.slice(0, n);
+  for (var i = 0; i < n; i++) {
+    if (!myTrainData[i]) myTrainData[i] = [];
+    if (!myRawData[i])   myRawData[i]   = [];
+    if (!myAutoSaveCounters[i]) myAutoSaveCounters[i] = 1;
+    if (!myDiskTotals[i])       myDiskTotals[i] = 0;
+    if (!myValImages[i])        myValImages[i]   = [];
+  }
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — WEBSERIAL (connect/disconnect/send)
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function mySerialLog(msg) {
+  var box = document.getElementById('mySerialLog');
+  var t   = new Date().toLocaleTimeString();
+  box.textContent += '['+t+'] '+msg+'\n';
+  if (document.getElementById('mySerialAutoScroll').checked)
+    box.scrollTop = box.scrollHeight;
+}
+
+function mySetSerialStatus(connected) {
+  mySerialConnected = connected;
+  var el = document.getElementById('mySerialStatus');
+  if (connected) {
+    el.textContent = '✓ Connected'; el.style.color = 'green';
+    var sel = document.getElementById('myCameraSelect');
+    if (!document.getElementById('opt-esp32-serial')) {
+      var opt = document.createElement('option');
+      opt.id = 'opt-esp32-serial'; opt.value = '__esp32serial__';
+      opt.text = 'ESP32 Camera (WebSerial)';
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    sel.value = '__esp32serial__';
+    myOnCameraSourceChange();
+  } else {
+    el.textContent = 'Not Connected'; el.style.color = '';
+    var opt2 = document.getElementById('opt-esp32-serial');
+    if (opt2) opt2.remove();
+    myStopEspStream();
+    document.getElementById('myEspStreamControls').style.display = 'none';
+  }
+}
+
+async function myConnectSerial() {
+  if (!('serial' in navigator)) { alert('WebSerial not supported — use Chrome/Edge on desktop.'); return; }
+  try {
+    mySerialPort = await navigator.serial.requestPort();
+    await mySerialPort.open({ baudRate: 115200 });
+    mySetSerialStatus(true);
+    myLog('ESP32 Serial connected');
+    mySerialLog('=== Connected at 115200 baud ===');
+    var td = new TextDecoderStream();
+    mySerialPort.readable.pipeTo(td.writable);
+    mySerialReader = td.readable.getReader();
+    mySerialReadLoop = (async function() {
+      try {
+        while (true) {
+          var r = await mySerialReader.read();
+          if (r.done) break;
+          if (r.value) myHandleSerialData(r.value);
+        }
+      } catch(e) { if (mySerialConnected) myLog('Serial read error: '+e.message); }
+    })();
+    var te = new TextEncoderStream();
+    te.readable.pipeTo(mySerialPort.writable);
+    mySerialWriter = te.writable.getWriter();
+  } catch(e) { myLog('Serial connect failed: '+e.message); }
+}
+
+async function myDisconnectSerial() {
+  myStopEspStream();
+  try {
+    if (mySerialReader) { await mySerialReader.cancel(); mySerialReader = null; }
+    if (mySerialWriter) { await mySerialWriter.close(); mySerialWriter = null; }
+    if (mySerialPort)   { await mySerialPort.close();   mySerialPort = null; }
+  } catch(e) {}
+  mySetSerialStatus(false);
+  myLog('ESP32 Serial disconnected');
+}
+
+async function mySendStr(str) {
+  if (!mySerialWriter) { myLog('Not connected to ESP32'); return; }
+  try { await mySerialWriter.write(str); } catch(e) { myLog('Serial write error: '+e.message); }
+}
+
+async function mySendSerialChar(c) {
+  await mySendStr(c + '\n');
+  mySerialLog('→ "'+c+'"');
+}
+
+async function mySendSerialLine() {
+  var cmd = document.getElementById('mySerialCmd').value.trim();
+  if (!cmd) return;
+  await mySendStr(cmd + '\n');
+  mySerialLog('→ "'+cmd+'"');
+  document.getElementById('mySerialCmd').value = '';
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — SERIAL DATA HANDLER (the most critical function)
+  Parses every token the firmware sends.
+  FOMO-specific: INFER:<className>,<gapConf>,<peakX>,<peakY>,<peakVal>,<numClusters>
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myHandleSerialData(raw) {
+  mySerialBuffer += raw;
+  var lines = mySerialBuffer.split('\n');
+  mySerialBuffer = lines.pop();   // keep incomplete tail
+  lines.forEach(function(line) {
+    line = line.trim();
+    if (!line) return;
+
+    // ── Serial log (show most lines) ──
+    if (!line.startsWith('FRAME_B64:') && !line.startsWith('HEATMAP:') &&
+        !line.startsWith('SD_LINE:')   && !line.startsWith('CAM_JPEG:') &&
+        !line.startsWith('SD_JPEG:')   && !line.startsWith('FILE_CHUNK:')) {
+      mySerialLog('← ' + line);
+    }
+
+    // ── COLLECT_COUNT:<classIdx>,<count> ──
+    if (line.startsWith('COLLECT_COUNT:')) {
+      var parts = line.substring(14).split(',');
+      var ci = parseInt(parts[0]), cnt = parseInt(parts[1]);
+      var el = document.getElementById('myCount'+ci);
+      if (el) el.textContent = cnt + ' samples';
+      return;
+    }
+
+    // ── TRAIN_EPOCH:<epoch>,<loss>,<acc> ──
+    if (line.startsWith('TRAIN_EPOCH:')) {
+      var p = line.substring(12).split(',');
+      var ep = parseInt(p[0]), loss = parseFloat(p[1]), acc = parseFloat(p[2]);
+      document.getElementById('myLossDisplay').textContent = loss.toFixed(4);
+      document.getElementById('myEpochDisplay').textContent = 'Epoch ' + ep;
+      myLossHistory.push(loss);
+      var targetEp = parseInt(document.getElementById('myTargetEpochs').value) || 30;
+      var pct = Math.min(100, (ep / targetEp) * 100);
+      document.getElementById('myProgressBar').style.width = pct + '%';
+      myLog('[ESP32 TRAIN] Epoch '+ep+' loss='+loss.toFixed(4)+' acc='+(acc*100).toFixed(1)+'%');
+      return;
+    }
+
+    // ── INFER:<className>,<gapConf>,<peakX>,<peakY>,<peakVal>,<numClusters> ──
+    if (line.startsWith('INFER:')) {
+      var payload = line.substring(6);
+      var p = payload.split(',');
+      if (p.length >= 6) {
+        var predClass   = p[0];
+        var gapConf     = parseFloat(p[1]);
+        var peakX       = parseInt(p[2]);
+        var peakY       = parseInt(p[3]);
+        var peakVal     = parseFloat(p[4]);
+        var numClusters = parseInt(p[5]);
+        myUpdateFomoDisplay(predClass, gapConf, peakX, peakY, peakVal, numClusters);
+        // draw overlay dot/box
+        var a = myGetArchSizes();
+        myDrawFomoOverlay(null, peakX, peakY, a.fomoGrid, numClusters);
+      }
+      return;
+    }
+
+    // ── HEATMAP:<r>x<c>:<base64> ──
+    if (line.startsWith('HEATMAP:')) {
+      var rest = line.substring(8);
+      var cx1  = rest.indexOf('x'), cx2 = rest.indexOf(':');
+      if (cx1 > 0 && cx2 > cx1) {
+        var rows = parseInt(rest.substring(0, cx1));
+        var cols = parseInt(rest.substring(cx1+1, cx2));
+        var b64  = rest.substring(cx2+1);
+        myRenderHeatmap(rows, cols, b64);
+        myHeatmapGrid = {rows:rows, cols:cols};
+        document.getElementById('myHeatmapDims').textContent = rows+'×'+cols;
+      }
+      return;
+    }
+
+    // ── FRAME_B64:<base64> (single-line camera frame) ──
+    if (line.startsWith('FRAME_B64:')) {
+      var b64 = line.substring(10);
+      myDecodeAndDisplayFrame(b64);
+      return;
+    }
+
+    // ── FILE transfer Promise resolution (v78 binary protocol) ──
+    if (line.startsWith('OK:FILE_READY')) {
+      if (myFileTransferResolve) myFileTransferResolve('FILE_READY');
+      return;
+    }
+    if (line.startsWith('OK:CHUNK_ACK:')) {
+      var idx = line.substring(13);
+      if (myFileTransferResolve) myFileTransferResolve('CHUNK_ACK:'+idx);
+      return;
+    }
+    if (line.startsWith('ERR:CHUNK_RETRY:')) {
+      if (myFileTransferReject) myFileTransferReject('RETRY:'+line.substring(16));
+      return;
+    }
+    if (line.startsWith('OK:FILE_DONE')) {
+      if (myFileTransferResolve) myFileTransferResolve('FILE_DONE');
+      return;
+    }
+    if (line.startsWith('ERR:FILE_SIZE_MISMATCH')) {
+      if (myFileTransferReject) myFileTransferReject('SIZE_MISMATCH');
+      return;
+    }
+
+    // ── SD browser ──
+    if (line === 'SD_LIST_START') { mySdCollectList = true; mySdEntries = []; return; }
+    if (line.startsWith('DIR:') && mySdCollectList) {
+      var name = line.substring(4);
+      mySdEntries.push({name:name, isDir:true, size:0}); return;
+    }
+    if (line.startsWith('FILE:') && mySdCollectList) {
+      var parts2 = line.substring(5).split(',');
+      mySdEntries.push({name:parts2[0], isDir:false, size:parseInt(parts2[1])||0}); return;
+    }
+    if (line === 'SD_LIST_END') {
+      mySdCollectList = false; mySdPopulateList(); return;
+    }
+    if (line === 'SD_READ_START') { mySdCollectContent = true; mySdContentLines = []; return; }
+    if (line.startsWith('SD_LINE:') && mySdCollectContent) {
+      mySdContentLines.push(line.substring(8)); return;
+    }
+    if (line === 'SD_READ_END') {
+      mySdCollectContent = false;
+      var text = mySdContentLines.join('\n');
+      if (mySdReadingConfig) { mySdReadingConfig = false; myApplyConfigJson(text); }
+      else if (myBinLoadActive) { myBinLoadActive = false; myBinLoadLines = mySdContentLines.slice(); myLoadWeightsFromBinLines(); }
+      else { mySdViewer(text); }
+      return;
+    }
+    if (line === 'SD_JPEG_START') { mySdCollectJpeg = true; mySdJpegChunks = []; return; }
+    if (line.startsWith('SD_JPEG:') && mySdCollectJpeg) {
+      mySdJpegChunks.push(line.substring(8)); return;
+    }
+    if (line === 'SD_JPEG_END') {
+      mySdCollectJpeg = false;
+      var b64j = mySdJpegChunks.join('');
+      if (mySdLoadOnJpegDone) { var cb = mySdLoadOnJpegDone; mySdLoadOnJpegDone = null; cb(b64j); }
+      else                     { mySdViewerJpeg(b64j); }
+      return;
+    }
+    if (line.startsWith('STATUS:')) { return; }
+
+    // OK/ERR SD commands — ignore or let fall through
+  });
+}
+
+function myUpdateFomoDisplay(predClass, gapConf, peakX, peakY, peakVal, numClusters) {
+  document.getElementById('myFomoPredClass').textContent   = predClass;
+  document.getElementById('myFomoGapConf').textContent     = (gapConf*100).toFixed(1)+'%';
+  document.getElementById('myFomoPeakX').textContent       = peakX;
+  document.getElementById('myFomoPeakY').textContent       = peakY;
+  document.getElementById('myFomoPeakVal').textContent     = peakVal.toFixed(4);
+  document.getElementById('myFomoNumClusters').textContent = numClusters;
+  // threshold shown from slider
+  var thr = parseFloat(document.getElementById('myFomoThreshSlider').value);
+  document.getElementById('myFomoActiveThr').textContent   = thr.toFixed(3);
+
+  // Update bar for predicted class — look up class index
+  var predIdx = myClassLabels.indexOf(predClass);
+  for (var i = 0; i < myNumClasses; i++) {
+    var pct = (i === predIdx) ? Math.round(gapConf * 100) : 0;
+    var fill = document.getElementById('myGapFill'+i);
+    var txt  = document.getElementById('myGapPct'+i);
+    var lbl  = document.getElementById('myGapLabel'+i);
+    if (fill) { fill.style.width = pct+'%'; fill.style.background = (i===predIdx?'#e44':'#0088cc'); }
+    if (txt)  txt.textContent = pct+'%';
+    if (lbl)  lbl.textContent = myClassLabels[i] || ('Class'+i);
+  }
+
+  // Detection count history
+  myFomoHistory.push(numClusters);
+  if (myFomoHistory.length > 60) myFomoHistory.shift();
+  myDrawDetectionChart();
+
+  // outputDisplay
+  var od = document.getElementById('myOutputDisplay');
+  od.innerHTML =
+    '<span style="font-weight:bold; font-size:1.1em; color:#222;">FOMO: '+predClass+'</span> '+
+    '<span style="color:#888;">GAP='+( gapConf*100).toFixed(1)+'% clusters='+numClusters+'</span>';
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — SD BROWSER
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function mySdNorm(p) { return (p.startsWith('/') ? p : '/' + p).replace(/\/+/g,'/') || '/'; }
+
+async function mySdRefresh() {
+  mySdNavigate(mySdCwd);
+}
+
+async function mySdNavigate(path) {
+  mySdCwd = mySdNorm(path);
+  mySdSelectedPath = null;
+  mySdSelectedIsDir = false;
+  document.getElementById('mySdDeleteBtn').style.display = 'none';
+  document.getElementById('mySdList').innerHTML = '<div style="padding:8px; color:#888;">Loading...</div>';
+  mySdBreadcrumb();
+  await mySendStr('SD_LIST:' + mySdCwd + '\n');
+}
+
+function mySdBreadcrumb() {
+  var parts = mySdCwd.split('/').filter(Boolean);
+  var bc = document.getElementById('mySdBreadcrumb');
+  var html = '<span class="mySdBcItem" onclick="mySdNavigate(\'/\')">/ (root)</span>';
+  var built = '';
+  parts.forEach(function(p) { built += '/'+p; var cp = built; html += ' / <span class="mySdBcItem" onclick="mySdNavigate(\''+cp+'\')">'+p+'</span>'; });
+  bc.innerHTML = html;
+}
+
+function mySdPopulateList() {
+  var list = document.getElementById('mySdList');
+  list.innerHTML = '';
+  if (!mySdEntries.length) { list.innerHTML = '<div style="padding:8px; color:#888;">(empty)</div>'; return; }
+  mySdEntries.sort(function(a,b){ if(a.isDir!==b.isDir) return a.isDir?-1:1; return a.name.localeCompare(b.name); });
+  mySdEntries.forEach(function(e) {
+    var fullPath = mySdNorm(mySdCwd + '/' + e.name);
+    var div = document.createElement('div');
+    div.className = 'mySdEntry' + (e.isDir ? ' mySdEntryDir' : '');
+    div.innerHTML = '<span class="mySdName">'+( e.isDir ? '📁 ' : '📄 ')+e.name+'</span>'+
+                    (e.isDir ? '' : '<span class="mySdSize">'+e.size+'B</span>');
+    div.onclick = function() {
+      if (e.isDir) { mySdNavigate(fullPath); return; }
+      // Select file
+      document.querySelectorAll('.mySdEntry').forEach(function(d){ d.classList.remove('mySdSelected'); });
+      div.classList.add('mySdSelected');
+      mySdSelectedPath = fullPath; mySdSelectedIsDir = false;
+      document.getElementById('mySdDeleteBtn').style.display = 'inline-block';
+      // Preview
+      if (e.name.match(/\.(jpg|jpeg|png|gif)$/i)) { mySdPreviewJpeg(fullPath); }
+      else { mySdPreviewText(fullPath); }
+    };
+    list.appendChild(div);
+  });
+}
+
+async function mySdPreviewJpeg(path) {
+  document.getElementById('mySdViewer').style.display = 'block';
+  document.getElementById('mySdViewerName').textContent = path;
+  document.getElementById('mySdViewerImg').style.display = 'none';
+  document.getElementById('mySdViewerText').style.display = 'none';
+  document.getElementById('mySdSaveTextBtn').style.display = 'none';
+  document.getElementById('mySdDownloadBtn').style.display = 'block';
+  await mySendStr('SD_JPEG:' + path + '\n');
+}
+
+async function mySdPreviewText(path) {
+  document.getElementById('mySdViewer').style.display = 'block';
+  document.getElementById('mySdViewerName').textContent = path;
+  document.getElementById('mySdContentFile') && (mySdContentFile = path);
+  mySdContentFile = path;
+  await mySendStr('SD_READ:' + path + '\n');
+}
+
+function mySdViewer(text) {
+  document.getElementById('mySdViewerImg').style.display = 'none';
+  document.getElementById('mySdViewerText').style.display = 'block';
+  document.getElementById('mySdViewerText').value = text;
+  document.getElementById('mySdSaveTextBtn').style.display = 'inline-block';
+  document.getElementById('mySdDownloadBtn').style.display = 'inline-block';
+}
+
+function mySdViewerJpeg(b64) {
+  document.getElementById('mySdViewerText').style.display = 'none';
+  var img = document.getElementById('mySdViewerImg');
+  img.src = 'data:image/jpeg;base64,' + b64;
+  img.style.display = 'block';
+}
+
+async function mySdSaveTextFile() {
+  var text  = document.getElementById('mySdViewerText').value;
+  var path  = mySdContentFile || '/unknown.txt';
+  var lines = text.replace(/\r\n/g,'\n').split('\n');
+  await mySendStr('SD_TEXT_WRITE_START:'+path+'\n');
+  for (var i = 0; i < lines.length; i++)
+    await mySendStr('SD_TEXT_CHUNK:'+lines[i].replace(/\n/g,'\\n')+'\n');
+  await mySendStr('SD_TEXT_WRITE_END\n');
+  myLog('Saved '+path+' to SD');
+}
+
+function mySdDownloadFile() {
+  var img  = document.getElementById('mySdViewerImg');
+  var text = document.getElementById('mySdViewerText');
+  var name = (mySdContentFile||'file').split('/').pop();
+  if (img.style.display !== 'none') {
+    var a = document.createElement('a'); a.href = img.src; a.download = name; a.click();
+  } else {
+    var blob = new Blob([text.value], {type:'text/plain'});
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  }
+}
+
+async function mySdDeleteSelected() {
+  if (!mySdSelectedPath) return;
+  if (!confirm('Delete '+mySdSelectedPath+'?')) return;
+  var cmd = mySdSelectedIsDir ? 'SD_RMDIR:' : 'SD_DELETE:';
+  await mySendStr(cmd + mySdSelectedPath + '\n');
+  mySdSelectedPath = null;
+  document.getElementById('mySdDeleteBtn').style.display = 'none';
+  setTimeout(mySdRefresh, 500);
+}
+
+function mySdGoUp() {
+  var parts = mySdCwd.split('/').filter(Boolean);
+  if (!parts.length) return;
+  parts.pop();
+  mySdNavigate('/' + parts.join('/'));
+}
+
+async function mySdReadConfig() {
+  mySdReadingConfig = true;
+  await mySendStr('SD_READ:/header/config.json\n');
+  myLog('Reading config.json from SD...');
+}
+
+function myApplyConfigJson(jsonText) {
+  try {
+    var cfg = JSON.parse(jsonText);
+    if (cfg.inputSize)     { myInputSize = cfg.inputSize; var sel = document.getElementById('myResolutionSelect'); if (sel) sel.value = myInputSize; }
+    if (cfg.numClasses)    { myReinitClassData(cfg.numClasses); var ns = document.getElementById('myNumClassesSelect'); if (ns) ns.value = cfg.numClasses; }
+    if (cfg.classLabels && Array.isArray(cfg.classLabels)) {
+      cfg.classLabels.forEach(function(l,i){ myClassLabels[i] = l; });
+    }
+    if (cfg.conv1Filters)  document.getElementById('myConv1Filters').value = cfg.conv1Filters;
+    if (cfg.conv2Filters)  document.getElementById('myConv2Filters').value = cfg.conv2Filters;
+    if (cfg.learningRate)  document.getElementById('myLearningRate').value = cfg.learningRate;
+    if (cfg.batchSize)     document.getElementById('myBatchSize').value = cfg.batchSize;
+    if (cfg.targetEpochs)  document.getElementById('myTargetEpochs').value = cfg.targetEpochs;
+    if (cfg.fomoThreshold !== undefined) {
+      document.getElementById('myFomoThreshSlider').value = cfg.fomoThreshold;
+      document.getElementById('myFomoThreshVal').textContent = cfg.fomoThreshold.toFixed(3);
+      document.getElementById('myExportFomoThreshold').value = cfg.fomoThreshold;
+      myFomoThreshold = cfg.fomoThreshold;
+    }
+    if (cfg.useDynamicThreshold !== undefined) {
+      document.getElementById('myUseDynamicThresh').checked = cfg.useDynamicThreshold;
+      document.getElementById('myExportUseDynamic').checked = cfg.useDynamicThreshold;
+    }
+    if (cfg.dynamicThresholdRatio !== undefined) {
+      document.getElementById('myDynThreshRatio').value = cfg.dynamicThresholdRatio;
+      document.getElementById('myExportDynRatio').value = cfg.dynamicThresholdRatio;
+    }
+    if (cfg.dynamicThresholdFloor !== undefined) document.getElementById('myExportDynFloor').value = cfg.dynamicThresholdFloor;
+    if (cfg.useAugmentation !== undefined)      document.getElementById('myUseAugmentation').checked = cfg.useAugmentation;
+    if (cfg.validationImages !== undefined)     document.getElementById('myValImages').value = cfg.validationImages;
+    myRenderClassRows();
+    myRenderSerialButtons();
+    myRefreshConfigTextarea();
+    myLog('config.json applied from SD: numClasses='+myNumClasses+' inputSize='+myInputSize);
+  } catch(e) { myLog('ERROR parsing config.json: '+e.message); }
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — CONFIG JSON EXPORT (myRefreshConfigTextarea / myExportBin)
+  cfg field names MUST match firmware mySaveConfig() EXACTLY
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myRefreshConfigTextarea() {
+  var nc  = myNumClasses;
+  var is  = myInputSize;
+  var c1f = parseInt(document.getElementById('myConv1Filters').value) || 4;
+  var c2f = parseInt(document.getElementById('myConv2Filters').value) || 8;
+  var lr  = parseFloat(document.getElementById('myLearningRate').value) || 0.0003;
+  var bs  = parseInt(document.getElementById('myBatchSize').value) || 12;
+  var te  = parseInt(document.getElementById('myTargetEpochs').value) || 30;
+  var vi  = parseInt(document.getElementById('myValImages').value) || 5;
+  var aug = document.getElementById('myUseAugmentation').checked;
+  var ft  = parseFloat(document.getElementById('myExportFomoThreshold').value) || 0.38;
+  var udt = document.getElementById('myExportUseDynamic').checked;
+  var dr  = parseFloat(document.getElementById('myExportDynRatio').value) || 0.90;
+  var df  = parseFloat(document.getElementById('myExportDynFloor').value) || 0.38;
+  var ver = parseInt(document.getElementById('myBinVersion').value) || 16;
+  var labels = [];
+  for (var i = 0; i < nc; i++) labels.push(myClassLabels[i] || ('Class'+i));
+  var cfg = {
+    inputSize:             is,
+    numClasses:            nc,
+    conv1Filters:          c1f,
+    conv2Filters:          c2f,
+    learningRate:          lr,
+    batchSize:             bs,
+    targetEpochs:          te,
+    thresholdPress:        1100,
+    thresholdRelease:      900,
+    screenTimeout:         300000,
+    weightsFile:           "myWeights.bin",
+    version:               ver,
+    minVersion:            ver,
+    useAugmentation:       aug,
+    validationImages:      vi,
+    fomoThreshold:         ft,
+    useDynamicThreshold:   udt,
+    dynamicThresholdRatio: dr,
+    dynamicThresholdFloor: df,
+    classLabels:           labels
+  };
+  document.getElementById('myConfigTextarea').value = JSON.stringify(cfg, null, 2);
+}
+
+function myExportConfigJson() {
+  myRefreshConfigTextarea();
+  var text = document.getElementById('myConfigTextarea').value;
+  var blob = new Blob([text], {type:'application/json'});
+  var a    = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'config.json'; a.click();
+  myLog('config.json downloaded');
+}
+
+// Export myWeights.bin — header block + float32 weights
+// Weight order: conv1_w, conv1_b, conv2_w, conv2_b, output_w (numClasses×conv2Filters), output_b (numClasses)
+function myExportBin() {
+  if (!myModel) { myLog('No model — train first'); return; }
+  var nc  = myNumClasses;
+  var c1f = parseInt(document.getElementById('myConv1Filters').value) || 4;
+  var c2f = parseInt(document.getElementById('myConv2Filters').value) || 8;
+  var ver = parseInt(document.getElementById('myBinVersion').value) || 16;
+  var labels = [];
+  for (var i = 0; i < nc; i++) labels.push(myClassLabels[i] || ('Class'+i));
+
+  var headerObj = {
+    version:     ver,
+    inputSize:   myInputSize,
+    numClasses:  nc,
+    conv1Filters: c1f,
+    conv2Filters: c2f,
+    quantization: "float32",
+    modelType:   "fomo",
+    labels:      labels
+  };
+  var headerStr = '--- WEIGHTS HEADER BEGIN ---\n' +
+                  JSON.stringify(headerObj, null, 2) + '\n' +
+                  '--- WEIGHTS HEADER END ---\n\n';
+
+  // Extract weights in firmware order
+  var weights = myModel.getWeights();
+  // Firmware order: conv1_w, conv1_b, conv2_w, conv2_b, output_w, output_b
+  // TF.js model layers: layers[0]=conv1 (kernel,bias), layers[1]=pool, layers[2]=conv2 (kernel,bias), layers[3]=output1x1 (kernel,bias)
+  // We flatten each in C-order matching firmware layout
+  var allFloats = [];
+  weights.forEach(function(w) {
+    var data = w.dataSync();
+    for (var j = 0; j < data.length; j++) allFloats.push(data[j]);
+  });
+
+  var headerBytes  = new TextEncoder().encode(headerStr);
+  var floatBuffer  = new Float32Array(allFloats);
+  var combined     = new Uint8Array(headerBytes.length + floatBuffer.buffer.byteLength);
+  combined.set(headerBytes, 0);
+  combined.set(new Uint8Array(floatBuffer.buffer), headerBytes.length);
+
+  var blob = new Blob([combined], {type:'application/octet-stream'});
+  var a    = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'myWeights.bin'; a.click();
+  myLog('myWeights.bin exported ('+allFloats.length+' floats, '+combined.length+' bytes total)');
+}
+
+function myExportWeightsH() {
+  if (!myModel) { myLog('No model'); return; }
+  var weights = myModel.getWeights();
+  var nc  = myNumClasses;
+  var lines = ['#ifndef MY_MODEL_H', '#define MY_MODEL_H',
+               '// FOMO model weights — copy to sketch folder then uncomment #define USE_BAKED_WEIGHTS',
+               '// #define NUM_CLASSES '+nc];
+  var names = ['myModel_conv1_w','myModel_conv1_b','myModel_conv2_w','myModel_conv2_b','myModel_output_w','myModel_output_b'];
+  weights.forEach(function(w, idx) {
+    var data = w.dataSync();
+    var name = names[idx] || ('myModel_w'+idx);
+    var vals = Array.from(data).map(function(v){ return v.toFixed(6)+'f'; }).join(', ');
+    lines.push('const float '+name+'[] = { '+vals+' };');
+  });
+  lines.push('#endif');
+  var blob = new Blob([lines.join('\n')], {type:'text/plain'});
+  var a    = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'myWeights.h'; a.click();
+  myLog('myWeights.h exported');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — mySendFile() v78 BINARY PROTOCOL (verbatim from spec)
+  1. FILE_SEND_START:<path>:<totalBytes>
+  2. Await OK:FILE_READY
+  3. Loop 512-byte chunks: XOR checksum, FILE_CHUNK:<idx>:<xor>:<hex>
+     Await OK:CHUNK_ACK:<idx> — on ERR:CHUNK_RETRY resend
+  4. FILE_SEND_END:<totalBytes>
+  5. Await OK:FILE_DONE — on ERR:FILE_SIZE_MISMATCH throw
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myMakeTransferPromise(timeoutMs) {
+  timeoutMs = timeoutMs || 15000;
+  return new Promise(function(resolve, reject) {
+    var timer = setTimeout(function(){ reject('TIMEOUT'); }, timeoutMs);
+    myFileTransferResolve = function(msg) { clearTimeout(timer); myFileTransferResolve = null; myFileTransferReject = null; resolve(msg); };
+    myFileTransferReject  = function(msg) { clearTimeout(timer); myFileTransferResolve = null; myFileTransferReject = null; reject(msg); };
+  });
+}
+
+async function mySendFile(sdPath, uint8Array) {
+  if (!mySerialWriter) throw new Error('Not connected');
+  var totalBytes = uint8Array.length;
+  var chunkSize  = 512;
+
+  // Step 1
+  await mySendStr('FILE_SEND_START:'+sdPath+':'+totalBytes+'\n');
+  myLog('[FILE] Sending '+sdPath+' ('+totalBytes+' bytes)...');
+
+  // Step 2 — await FILE_READY
+  var r = await myMakeTransferPromise(15000);
+  if (r !== 'FILE_READY') throw new Error('Expected FILE_READY, got: '+r);
+
+  // Step 3 — chunks
+  var numChunks = Math.ceil(totalBytes / chunkSize);
+  for (var idx = 0; idx < numChunks; idx++) {
+    var sent = false;
+    while (!sent) {
+      var start  = idx * chunkSize;
+      var end    = Math.min(start + chunkSize, totalBytes);
+      var chunk  = uint8Array.slice(start, end);
+      var xor    = 0;
+      var hexArr = [];
+      for (var b = 0; b < chunk.length; b++) {
+        xor ^= chunk[b];
+        var h = chunk[b].toString(16);
+        hexArr.push(h.length === 1 ? '0'+h : h);
+      }
+      await mySendStr('FILE_CHUNK:'+idx+':'+xor+':'+hexArr.join('')+'\n');
+      var ack = await myMakeTransferPromise(10000);
+      if (ack === 'CHUNK_ACK:'+idx) { sent = true; }
+      else if (ack.startsWith('RETRY:')) { myLog('[FILE] Retrying chunk '+idx); }
+      else throw new Error('Unexpected ack: '+ack);
+    }
+    if (idx % 10 === 0) myLog('[FILE] Chunk '+idx+'/'+numChunks);
+  }
+
+  // Step 4
+  await mySendStr('FILE_SEND_END:'+totalBytes+'\n');
+
+  // Step 5
+  var done = await myMakeTransferPromise(15000);
+  if (!done.startsWith('FILE_DONE')) throw new Error('Expected FILE_DONE, got: '+done);
+  myLog('[FILE] Transfer complete: '+sdPath);
+}
+
+// mySaveBothToSd — sends config.json then myWeights.bin in one click
+async function mySaveBothToSd() {
+  var status = document.getElementById('mySaveBothStatus');
+  status.textContent = 'Sending config.json...';
+  try {
+    // 1. Send config.json
+    myRefreshConfigTextarea();
+    var cfgText  = document.getElementById('myConfigTextarea').value;
+    var cfgBytes = new TextEncoder().encode(cfgText);
+    await mySendFile('/header/config.json', cfgBytes);
+    status.textContent = 'config.json sent. Sending myWeights.bin...';
+
+    // 2. Build and send myWeights.bin
+    if (!myModel) throw new Error('No model trained');
+    var nc  = myNumClasses;
+    var c1f = parseInt(document.getElementById('myConv1Filters').value) || 4;
+    var c2f = parseInt(document.getElementById('myConv2Filters').value) || 8;
+    var ver = parseInt(document.getElementById('myBinVersion').value) || 16;
+    var labels = [];
+    for (var i = 0; i < nc; i++) labels.push(myClassLabels[i]||('Class'+i));
+    var headerObj = { version:ver, inputSize:myInputSize, numClasses:nc,
+                      conv1Filters:c1f, conv2Filters:c2f,
+                      quantization:'float32', modelType:'fomo', labels:labels };
+    var headerStr  = '--- WEIGHTS HEADER BEGIN ---\n'+JSON.stringify(headerObj,null,2)+'\n--- WEIGHTS HEADER END ---\n\n';
+    var headerBytes = new TextEncoder().encode(headerStr);
+    var weights = myModel.getWeights();
+    var allFloats = [];
+    weights.forEach(function(w){ var d = w.dataSync(); for(var j=0;j<d.length;j++) allFloats.push(d[j]); });
+    var floatBuffer = new Float32Array(allFloats);
+    var combined    = new Uint8Array(headerBytes.length + floatBuffer.buffer.byteLength);
+    combined.set(headerBytes, 0);
+    combined.set(new Uint8Array(floatBuffer.buffer), headerBytes.length);
+    await mySendFile('/header/myWeights.bin', combined);
+    status.textContent = '✓ Both files sent to SD!';
+    myLog('mySaveBothToSd complete');
+  } catch(e) {
+    status.textContent = '❌ Error: '+e;
+    myLog('mySaveBothToSd error: '+e);
+  }
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — myXfer* BULK IMAGE TRANSFER
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+async function myXferImagesToSd() {
+  var sel = document.getElementById('myXferClassSelect').value;
+  var classes = (sel === 'all') ? Array.from({length:myNumClasses},function(_,i){return i;}) : [parseInt(sel)];
+  var statusEl = document.getElementById('myXferStatus');
+  statusEl.textContent = 'Starting...';
+  var total = 0;
+  for (var ci of classes) {
+    var label = myClassLabels[ci] || ('Class'+ci);
+    var images = myRawData[ci] || [];
+    for (var j = 0; j < images.length; j++) {
+      statusEl.textContent = 'Class '+ci+' image '+(j+1)+'/'+images.length;
+      var b64 = images[j];
+      var path = '/images/'+label+'/img_'+String(j+1).padStart(4,'0')+'.jpg';
+      // Send as JPEG via SD_JPEG_WRITE protocol
+      await mySendStr('SD_JPEG_WRITE_START:'+path+'\n');
+      // Send in chunks of 200 chars
+      var chunkSz = 200;
+      for (var k = 0; k < b64.length; k += chunkSz) {
+        await mySendStr('SD_JPEG_CHUNK:'+b64.substring(k, k+chunkSz)+'\n');
+        await new Promise(function(r){ setTimeout(r, 5); });
+      }
+      await mySendStr('SD_JPEG_WRITE_END\n');
+      await new Promise(function(r){ setTimeout(r, 80); });
+      total++;
+    }
+  }
+  statusEl.textContent = '✓ Transferred '+total+' images';
+  myLog('Bulk transfer complete: '+total+' images');
+}
+
+async function myLoadFromSd(classId) {
+  mySdLoadClassId = classId;
+  var label = myClassLabels[classId] || ('Class'+classId);
+  mySdLoadCwd = '/images/'+label;
+  mySdLoadQueue = [];
+  mySdCollectList = true;
+  mySdEntries = [];
+  await mySendStr('SD_LIST:'+mySdLoadCwd+'\n');
+  // After SD_LIST_END fires, mySdProcessLoadQueue() is called
+  myLog('Loading images for class '+classId+' from SD '+mySdLoadCwd);
+  // Hook: re-route SD_LIST_END when loading for class
+  mySdLoadActive = true;
+}
+
+var mySdLoadActive = false;
+
+// Intercept SD_LIST_END for class loading
+var _origSdPopulate = mySdPopulateList;
+function mySdPopulateList() {
+  if (mySdLoadActive) {
+    mySdLoadActive = false;
+    mySdLoadQueue = mySdEntries.filter(function(e){ return !e.isDir && e.name.match(/\.(jpg|jpeg)$/i); })
+                               .map(function(e){ return mySdLoadCwd+'/'+e.name; });
+    myLog('SD load: '+mySdLoadQueue.length+' images queued for class '+mySdLoadClassId);
+    myXferNextSdImage();
+    return;
+  }
+  _origSdPopulate();
+}
+
+async function myXferNextSdImage() {
+  if (!mySdLoadQueue.length) { myLog('SD load complete for class '+mySdLoadClassId); return; }
+  var path = mySdLoadQueue.shift();
+  mySdLoadOnJpegDone = function(b64) {
+    myAddRawImage(mySdLoadClassId, b64);
+    setTimeout(myXferNextSdImage, 50);
+  };
+  await mySendStr('SD_JPEG:'+path+'\n');
+}
+
+function myAddRawImage(classId, b64) {
+  if (!myRawData[classId]) myRawData[classId] = [];
+  myRawData[classId].push(b64);
+  var cnt = myRawData[classId].length;
+  var el  = document.getElementById('myCount'+classId);
+  if (el) el.textContent = cnt+' samples';
+  // Convert to tensor for training
+  var img = new Image();
+  img.onload = function() {
+    myEspTempCtx.drawImage(img, 0, 0, 240, 240);
+    var pix = myEspTempCtx.getImageData(0,0,240,240);
+    var t = tf.tidy(function() {
+      return tf.browser.fromPixels({data:pix.data,width:240,height:240})
+               .resizeNearestNeighbor([myInputSize, myInputSize]).toFloat().div(255);
+    });
+    if (!myTrainData[classId]) myTrainData[classId] = [];
+    if (myTrainData[classId].length >= myMaxBuffer) { myTrainData[classId].shift().dispose(); }
+    myTrainData[classId].push(t);
+  };
+  img.src = 'data:image/jpeg;base64,'+b64;
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — CAMERA (webcam + ESP32 stream)
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+var myStream = null;
+var myEspStreamActive = false;
+var myEspStreamIntervalHandle = null;
+
+async function myStartAll() {
+  await myEnumerateCameras();
+  var source = document.getElementById('myCameraSelect').value;
+  if (source === '__esp32serial__') {
+    myStartEspCameraMode();
+  } else {
+    await myStartWebcam(source);
+  }
+  if (!myModel) myBuildModel();
+  myStartAnalysis();
+  document.getElementById('myStartBtn').style.display = 'none';
+  document.getElementById('myStopCameraBtn').style.display = 'inline-block';
+}
+
+async function myEnumerateCameras() {
+  try {
+    await navigator.mediaDevices.getUserMedia({video:true});
+    var devices = await navigator.mediaDevices.enumerateDevices();
+    var sel = document.getElementById('myCameraSelect');
+    var existing = Array.from(sel.options).map(function(o){return o.value;});
+    devices.filter(function(d){return d.kind==='videoinput';}).forEach(function(d){
+      if (!existing.includes(d.deviceId)) {
+        var opt = document.createElement('option'); opt.value = d.deviceId; opt.text = d.label||('Camera '+sel.options.length); sel.appendChild(opt);
+      }
+    });
+  } catch(e) { myLog('Camera enumerate: '+e.message); }
+}
+
+async function myStartWebcam(deviceId) {
+  if (myStream) { myStream.getTracks().forEach(function(t){t.stop();}); }
+  try {
+    var constraints = {video:{width:240,height:240}};
+    if (deviceId && deviceId !== '__esp32serial__') constraints.video.deviceId = {exact:deviceId};
+    myStream = await navigator.mediaDevices.getUserMedia(constraints);
+    var v = document.getElementById('myVideo1');
+    v.srcObject = myStream; v.style.display = 'block';
+    document.getElementById('myCanvas1').style.display = 'none';
+    document.getElementById('myEspImg').style.display = 'none';
+    document.getElementById('myEspStreamControls').style.display = 'none';
+    document.getElementById('myFomoOverlay').style.display = 'block';
+    myLog('Webcam started');
+  } catch(e) { myLog('Webcam error: '+e.message); }
+}
+
+function myStartEspCameraMode() {
+  document.getElementById('myVideo1').style.display = 'none';
+  document.getElementById('myCanvas1').style.display = 'none';
+  document.getElementById('myEspImg').style.display = 'block';
+  document.getElementById('myEspOverlay').style.display = 'block';
+  document.getElementById('myFomoOverlay').style.display = 'block';
+  document.getElementById('myEspStreamControls').style.display = 'block';
+  myLog('ESP32 camera mode');
+}
+
+function myStopCamera() {
+  if (myStream) { myStream.getTracks().forEach(function(t){t.stop()}); myStream = null; }
+  myStopEspStream();
+  document.getElementById('myStopCameraBtn').style.display = 'none';
+  document.getElementById('myStartBtn').style.display = 'inline-block';
+}
+
+function myOnCameraSourceChange() {
+  var src = document.getElementById('myCameraSelect').value;
+  if (src === '__esp32serial__') myStartEspCameraMode();
+}
+
+async function myRequestEspFrame() {
+  await mySendStr('CAM_CAPTURE\n');
+}
+
+async function myToggleEspStream() {
+  var btn = document.getElementById('myEspStreamBtn');
+  if (myEspStreaming) {
+    myStopEspStream();
+    btn.textContent = '▶ Start Stream';
+  } else {
+    myEspStreaming = true;
+    btn.textContent = '■ Stop Stream';
+    await mySendStr('CAM_STREAM\n');
+    var ms = parseInt(document.getElementById('myEspStreamInterval').value) || 800;
+    myEspStreamIntervalHandle = setInterval(function() {
+      if (myEspStreaming) mySendStr('CAM_CAPTURE\n');
+    }, ms);
+  }
+}
+
+async function myStopEspStream() {
+  myEspStreaming = false;
+  if (myEspStreamIntervalHandle) { clearInterval(myEspStreamIntervalHandle); myEspStreamIntervalHandle = null; }
+  await mySendStr('CAM_STREAM_STOP\n');
+}
+
+function myDecodeAndDisplayFrame(b64) {
+  myEspLastB64 = b64;
+  var img = new Image();
+  img.onload = function() {
+    myEspTempCtx.drawImage(img, 0, 0, 240, 240);
+    myEspLastFrame = myEspTempCtx.getImageData(0, 0, 240, 240);
+    document.getElementById('myEspImg').src = 'data:image/jpeg;base64,'+b64;
+  };
+  img.src = 'data:image/jpeg;base64,'+b64;
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — TFJS MODEL (FOMO architecture mirrors firmware)
+  Conv2D(3×3,conv1F,leaky_relu) → MaxPool(2×2) →
+  Conv2D(3×3,conv2F,leaky_relu) → Conv2D(1×1,numClasses,sigmoid) →
+  GlobalAveragePooling2D
+  Loss: MSE (per-cell binary target map)
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myBuildModel() {
+  if (myModel) { myModel.dispose(); myModel = null; }
+  var nc  = myNumClasses;
+  var c1f = parseInt(document.getElementById('myConv1Filters').value) || 4;
+  var c2f = parseInt(document.getElementById('myConv2Filters').value) || 8;
+  var channels = 3; // always RGB, matching firmware (3 channels in conv1Weights = 3*3*3*c1f)
+
+  var inp = tf.input({shape:[myInputSize, myInputSize, channels]});
+  var x = tf.layers.conv2d({filters:c1f, kernelSize:3, padding:'valid', activation:'relu',
+                             kernelInitializer:'heNormal'}).apply(inp);
+  x = tf.layers.maxPooling2d({poolSize:2, strides:2}).apply(x);
+  x = tf.layers.conv2d({filters:c2f, kernelSize:3, padding:'valid', activation:'relu',
+                         kernelInitializer:'heNormal'}).apply(x);
+  // FOMO 1×1 conv with sigmoid — output: [batch, fomoGrid, fomoGrid, numClasses]
+  x = tf.layers.conv2d({filters:nc, kernelSize:1, padding:'valid', activation:'sigmoid',
+                         kernelInitializer:'glorotNormal'}).apply(x);
+  // GlobalAveragePooling2D → [batch, numClasses]
+  var out = tf.layers.globalAveragePooling2d().apply(x);
+
+  myModel = tf.model({inputs:inp, outputs:out});
+  var lr = parseFloat(document.getElementById('myLearningRate').value) || 0.0003;
+  myModel.compile({optimizer:tf.train.adam(lr), loss:'meanSquaredError', metrics:['accuracy']});
+
+  var a = myGetArchSizes();
+  myLog('FOMO model built: inputSize='+myInputSize+' conv1F='+c1f+' conv2F='+c2f+
+        ' fomoGrid='+a.fomoGrid+'×'+a.fomoGrid+' classes='+nc);
+  myUpdateResolutionHint();
+  myRefreshConfigTextarea();
+  return myModel;
+}
+
+// myForceStartTraining — sends TRAIN command over WebSerial
+async function myForceStartTraining() {
+  var n = myNumClasses;
+  // Navigate to Train menu item = numClasses + 1
+  await mySendSerialChar(String(n + 1));
+  myLog('Force start training sent (menu item '+(n+1)+')');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — IMAGE COLLECTION (Capture + Load from PC)
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myGetCurrentFrame() {
+  var src = document.getElementById('myCameraSelect').value;
+  if (src === '__esp32serial__') {
+    return myEspLastFrame;  // ImageData 240×240 or null
+  }
+  var v = document.getElementById('myVideo1');
+  if (!v || !v.srcObject) return null;
+  myRawCtx.drawImage(v, 0, 0, 240, 240);
+  return myRawCtx.getImageData(0, 0, 240, 240);
+}
+
+function myCollect(classId) {
+  var frame = myGetCurrentFrame();
+  if (!frame) { myLog('No camera frame — start camera first'); return; }
+  myEspTempCtx.putImageData(frame, 0, 0);
+  var b64 = myEspTempCanvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+  myAddRawImage(classId, b64);
+  // Auto-save to project folder if set
+  if (mySaveFolder) myAutoSaveImage(classId, b64);
+}
+
+function myLoadImages(classId) {
+  var inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true; inp.accept = 'image/*';
+  inp.onchange = function() {
+    var files = Array.from(inp.files);
+    files.forEach(function(f) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var b64 = e.target.result.split(',')[1];
+        myAddRawImage(classId, b64);
+      };
+      reader.readAsDataURL(f);
+    });
+    myLog('Loaded '+files.length+' images for class '+classId);
+  };
+  inp.click();
+}
+
+function myClearImages(classId) {
+  if (myTrainData[classId]) { myTrainData[classId].forEach(function(t){t.dispose();}); myTrainData[classId] = []; }
+  myRawData[classId] = [];
+  var el = document.getElementById('myCount'+classId);
+  if (el) el.textContent = '0 samples';
+  myLog('Cleared RAM for class '+classId);
+}
+
+// Auto-save to OPFS project folder
+async function myAutoSaveImage(classId, b64) {
+  try {
+    var label = myClassLabels[classId] || ('Class'+classId);
+    var imagesDir = await mySaveFolder.getDirectoryHandle('images', {create:true});
+    var classDir  = await imagesDir.getDirectoryHandle(label, {create:true});
+    var idx = myAutoSaveCounters[classId]++;
+    var name = 'img_'+String(idx).padStart(4,'0')+'.jpg';
+    var fh   = await classDir.getFileHandle(name, {create:true});
+    var ws   = await fh.createWritable();
+    var bytes = Uint8Array.from(atob(b64), function(c){return c.charCodeAt(0);});
+    await ws.write(bytes); await ws.close();
+    myDiskTotals[classId]++;
+    var el = document.getElementById('myDiskCount'+classId);
+    if (el) el.textContent = '('+myDiskTotals[classId]+' on disk)';
+  } catch(e) { myLog('Auto-save error: '+e.message); }
+}
+
+// Folder pickers
+async function myPickSaveFolder() {
+  try {
+    mySaveFolder = await window.showDirectoryPicker();
+    document.getElementById('myFolderStatus').textContent = 'Folder: '+mySaveFolder.name;
+    document.getElementById('myForgetFolderBtn').style.display = 'inline-block';
+    myLog('Project folder set: '+mySaveFolder.name);
+  } catch(e) { myLog('Folder picker: '+e.message); }
+}
+
+function myForgetSaveFolder() {
+  mySaveFolder = null;
+  document.getElementById('myFolderStatus').textContent = 'None — images held in RAM only';
+  document.getElementById('myForgetFolderBtn').style.display = 'none';
+}
+
+async function myPickAndLoadFolder() {
+  try {
+    var folder = await window.showDirectoryPicker();
+    var imagesDir = await folder.getDirectoryHandle('images', {create:false});
+    for await (var [name, handle] of imagesDir.entries()) {
+      if (handle.kind !== 'directory') continue;
+      var ci = myClassLabels.indexOf(name);
+      if (ci < 0) continue;
+      for await (var [fname, fh] of handle.entries()) {
+        if (!fname.match(/\.(jpg|jpeg|png)$/i)) continue;
+        var file   = await fh.getFile();
+        var reader = new FileReader();
+        await new Promise(function(res) {
+          reader.onload = function(e) { myAddRawImage(ci, e.target.result.split(',')[1]); res(); };
+          reader.readAsDataURL(file);
+        });
+      }
+    }
+    myLog('Loaded images from folder: '+folder.name);
+  } catch(e) { myLog('Load folder error: '+e.message); }
+}
+
+async function myLoadModelFromFolder() {
+  try {
+    var folder = await window.showDirectoryPicker();
+    var headerDir = await folder.getDirectoryHandle('header', {create:false});
+    var fh   = await headerDir.getFileHandle('myWeights.bin', {create:false});
+    var file = await fh.getFile();
+    var buf  = await file.arrayBuffer();
+    myLoadWeightsFromArrayBuffer(buf);
+  } catch(e) { myLog('Load model from folder: '+e.message); }
+}
+
+async function myLoadWeightsBinFromSd() {
+  myBinLoadActive = true;
+  await mySendStr('SD_READ:/header/myWeights.bin\n');
+  myLog('Requesting myWeights.bin from SD...');
+}
+
+function myLoadWeightsFromBinLines() {
+  myLog('myLoadWeightsFromBinLines: stub — binary reading via SD_READ not supported. Use Load model from folder or mySaveBothToSd workflow.');
+}
+
+function myLoadWeightsFromArrayBuffer(buf) {
+  // Skip ASCII header (scan for blank line after WEIGHTS HEADER END)
+  var u8 = new Uint8Array(buf);
+  var headerEnd = 0;
+  var str = new TextDecoder().decode(u8);
+  var endMarker = '--- WEIGHTS HEADER END ---\n\n';
+  var markerIdx = str.indexOf(endMarker);
+  if (markerIdx < 0) { myLog('Header marker not found in .bin file'); return; }
+  headerEnd = markerIdx + endMarker.length;
+  var floatBytes = buf.slice(headerEnd);
+  var floats = new Float32Array(floatBytes);
+  if (!myModel) myBuildModel();
+  var weights = myModel.getWeights();
+  var offset = 0;
+  var newWeights = weights.map(function(w) {
+    var n    = w.size;
+    var data = floats.slice(offset, offset + n);
+    offset  += n;
+    return tf.tensor(Array.from(data), w.shape);
+  });
+  myModel.setWeights(newWeights);
+  newWeights.forEach(function(t){t.dispose();});
+  myLog('Weights loaded from .bin ('+floats.length+' floats)');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — TRAINING
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+var myTrainingActive = false;
+var myTrainingHandle = null;
+
+// For FOMO: target is a scalar per class (GAP target = fraction of cells = 1 if object present)
+// Simplified: class present → target=1, absent → target=0  (mimics firmware GAP output)
+function myMakeFomoTarget(classId, nc) {
+  var t = new Array(nc).fill(0);
+  t[classId] = 1.0;
+  return t;
+}
+
+async function myStartAnalysis() {
+  if (!myModel) myBuildModel();
+  myAnalysisStopped = false;
+  document.getElementById('myStartAnalysisBtn').style.display = 'none';
+  document.getElementById('myStopAnalysisBtn').disabled = false;
+  myRunAnalysisLoop();
+}
+
+function myStopAnalysis() {
+  myAnalysisStopped = true;
+  document.getElementById('myStopAnalysisBtn').disabled = true;
+  document.getElementById('myStartAnalysisBtn').style.display = 'inline-block';
+}
+
+function myGetInferenceFrame() {
+  var src = document.getElementById('myCameraSelect').value;
+  if (src === '__esp32serial__') {
+    if (!myEspLastFrame) return null;
+    myEspTempCtx.putImageData(myEspLastFrame, 0, 0);
+    return myEspTempCanvas;
+  }
+  return document.getElementById('myVideo1');
+}
+
+function myRunAnalysisLoop() {
+  if (myAnalysisStopped || !myModel) return;
+  var src = myGetInferenceFrame();
+  if (src) {
+    tf.tidy(function() {
+      var t = tf.browser.fromPixels(src)
+               .resizeNearestNeighbor([myInputSize, myInputSize]).toFloat().div(255).expandDims(0);
+      var pred = myModel.predict(t);
+      var data = pred.dataSync();
+      // data is per-class GAP confidence
+      var maxIdx = 0;
+      for (var i = 1; i < myNumClasses; i++) if (data[i] > data[maxIdx]) maxIdx = i;
+      var gapConf = data[maxIdx];
+      // Browser inference: no peakX/Y (would need intermediate layer access)
+      myUpdateFomoDisplay(myClassLabels[maxIdx]||('Class'+maxIdx), gapConf, 0, 0, gapConf, gapConf > myFomoThreshold ? 1 : 0);
+    });
+  }
+  myTimer = requestAnimationFrame(function() { setTimeout(myRunAnalysisLoop, 100); });
+}
+
+function myPauseTraining()  { myTrainingPaused = true;  document.getElementById('myPauseBtn').disabled = true; document.getElementById('myResumeBtn').style.display = 'inline-block'; }
+function myResumeTraining() { myTrainingPaused = false; document.getElementById('myResumeBtn').style.display = 'none'; document.getElementById('myPauseBtn').disabled = false; myTrainBatch(); }
+
+async function myTrainBatch() {
+  if (myTrainingPaused) return;
+  var total = 0;
+  for (var i = 0; i < myNumClasses; i++) total += (myTrainData[i]||[]).length;
+  var minS = parseInt(document.getElementById('myMinSamples').value) || 10;
+  if (total < minS * myNumClasses) {
+    document.getElementById('myStatusDisplay').textContent = 'Need '+minS+' per class (have '+total+')';
+    myTrainingHandle = setTimeout(myTrainBatch, 2000);
+    return;
+  }
+
+  if (!myModel) myBuildModel();
+
+  var bs  = parseInt(document.getElementById('myBatchSize').value) || 12;
+  var lr  = parseFloat(document.getElementById('myLearningRate').value) || 0.0003;
+  // Re-compile if lr changed
+  myModel.compile({optimizer:tf.train.adam(lr), loss:'meanSquaredError', metrics:['accuracy']});
+
+  // Build batch
+  var xs = [], ys = [];
+  for (var b = 0; b < bs; b++) {
+    // Pick random class, then random image
+    var ci = Math.floor(Math.random() * myNumClasses);
+    var arr = myTrainData[ci];
+    if (!arr || !arr.length) { b--; continue; }
+    xs.push(arr[Math.floor(Math.random()*arr.length)]);
+    ys.push(myMakeFomoTarget(ci, myNumClasses));
+  }
+
+  await tf.tidy(function() {});  // gc
+
+  var xTensor = tf.stack(xs);
+  var yTensor = tf.tensor2d(ys);
+  try {
+    var result = await myModel.trainOnBatch(xTensor, yTensor);
+    var loss = Array.isArray(result) ? result[0] : result;
+    myEpochCount++;
+    myLossSum += loss; myLossCount++;
+    if (myEpochCount % 5 === 0) {
+      var avgLoss = myLossSum / myLossCount;
+      myLossSum = 0; myLossCount = 0;
+      document.getElementById('myLossDisplay').textContent   = avgLoss.toFixed(4);
+      document.getElementById('myEpochDisplay').textContent  = myEpochCount;
+      document.getElementById('myStatusDisplay').textContent = 'Training...';
+      var targetBatches = parseInt(document.getElementById('myTargetEpochs').value) * Math.ceil(total / bs);
+      var pct = Math.min(100, (myEpochCount / Math.max(1, targetBatches)) * 100);
+      document.getElementById('myProgressBar').style.width = pct+'%';
+    }
+    if (document.getElementById('myAutoSaveWeights').checked && myEpochCount % 10 === 0) myExportBin();
+  } finally {
+    xTensor.dispose(); yTensor.dispose();
+  }
+
+  myTrainingHandle = setTimeout(myTrainBatch, 0);
+}
+
+function mySaveModel() {
+  if (!myModel) { myLog('No model'); return; }
+  myModel.save('downloads://myFomoModel').then(function(){ myLog('TFJS model saved'); });
+}
+
+function myLoadModel() {
+  var inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = '.json,.bin';
+  inp.onchange = async function() {
+    var files = Array.from(inp.files);
+    var jsonFile = files.find(function(f){return f.name.endsWith('.json');});
+    var binFiles = files.filter(function(f){return f.name.endsWith('.bin');});
+    if (!jsonFile) { myLog('Select .json file'); return; }
+    try {
+      myModel = await tf.loadLayersModel(tf.io.browserFiles([jsonFile].concat(binFiles)));
+      myLog('TFJS model loaded from files');
+    } catch(e) { myLog('Model load error: '+e.message); }
+  };
+  inp.click();
+}
+
+function myDebugCurrentFrame() {
+  var src = myGetInferenceFrame();
+  if (!src) { myLog('No frame'); return; }
+  tf.tidy(function() {
+    var t = tf.browser.fromPixels(src).resizeNearestNeighbor([myInputSize,myInputSize]).toFloat().div(255).expandDims(0);
+    var p = myModel ? myModel.predict(t).dataSync() : null;
+    myLog('Debug: '+myInputSize+'×'+myInputSize+' pred='+(p?Array.from(p).map(function(v){return v.toFixed(3);}).join(','):'no model'));
+  });
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — FOMO OVERLAY CANVAS (detection boxes on camera preview)
+  Draws dot/crosshair at (peakX/fomoGrid, peakY/fomoGrid) × canvas size
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myDrawFomoOverlay(clusterData, peakX, peakY, fomoGrid, numClusters) {
+  var canvas = document.getElementById('myFomoOverlay');
+  if (!canvas || !document.getElementById('myFomoOverlayToggle').checked) return;
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 240, 240);
+  if (!fomoGrid || fomoGrid <= 0) return;
+
+  var cellW = 240 / fomoGrid;
+  var cellH = 240 / fomoGrid;
+  var cx    = (peakX + 0.5) * cellW;
+  var cy    = (peakY + 0.5) * cellH;
+
+  // Draw crosshair dot at peak cell
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth   = 2;
+  ctx.beginPath(); ctx.arc(cx, cy, Math.max(6, cellW*0.5), 0, Math.PI*2); ctx.stroke();
+
+  // Draw box around peak cell
+  ctx.strokeStyle = '#ff0';
+  ctx.lineWidth   = 1.5;
+  ctx.strokeRect(peakX * cellW, peakY * cellH, cellW, cellH);
+
+  // Label cluster count
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(2, 2, 80, 16);
+  ctx.fillStyle = '#0ff';
+  ctx.font = '11px monospace';
+  ctx.fillText('clusters: '+numClusters, 4, 14);
+}
+
+function myToggleFomoOverlay() {
+  var show = document.getElementById('myFomoOverlayToggle').checked;
+  if (!show) {
+    var canvas = document.getElementById('myFomoOverlay');
+    if (canvas) canvas.getContext('2d').clearRect(0, 0, 240, 240);
+  }
+}
+
+function myOnThreshSlider() {
+  var val = parseFloat(document.getElementById('myFomoThreshSlider').value);
+  document.getElementById('myFomoThreshVal').textContent = val.toFixed(3);
+  myFomoThreshold = val;
+  document.getElementById('myExportFomoThreshold').value = val;
+  myRefreshConfigTextarea();
+  // Send to ESP32 if connected
+  if (mySerialConnected) mySendStr('DETECTION_THRESHOLD:'+val.toFixed(3)+'\n');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — HEATMAP (Section 4/7)
+  HEATMAP:<rows>x<cols>:<base64> → paint canvas with heat colours
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myRenderHeatmap(rows, cols, b64) {
+  var raw = atob(b64);
+  var canvas = document.getElementById('myHeatmapCanvas');
+  canvas.width  = cols * 6;
+  canvas.height = rows * 6;
+  var ctx = canvas.getContext('2d');
+  document.getElementById('myHeatmapPanel').style.display = 'block';
+  for (var r = 0; r < rows; r++) {
+    for (var c = 0; c < cols; c++) {
+      var v = raw.charCodeAt(r * cols + c);
+      var t = v / 255;
+      var R = Math.round(255 * Math.min(1, t*2));
+      var B = Math.round(255 * Math.min(1, (1-t)*2));
+      ctx.fillStyle = 'rgb('+R+',0,'+B+')';
+      ctx.fillRect(c*6, r*6, 6, 6);
+    }
+  }
+}
+
+async function myToggleHeatmapLive() {
+  var btn = document.getElementById('myHeatmapLiveBtn');
+  if (myHeatmapLive) {
+    myHeatmapLive = false;
+    btn.textContent = '▶ ESP32 Heatmap';
+    await mySendStr('HEATMAP_OFF\n');
+  } else {
+    myHeatmapLive = true;
+    btn.textContent = '■ Stop Heatmap';
+    await mySendStr('HEATMAP_ON\n');
+    document.getElementById('myHeatmapPanel').style.display = 'block';
+  }
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — DETECTION CHART SPARKLINE (Section 7 evaluation)
+  Shows cluster count per frame for the last 60 ESP32 inferences
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myDrawDetectionChart() {
+  var canvas = document.getElementById('myDetectionChart');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!myFomoHistory.length) return;
+  var maxV = Math.max(1, Math.max.apply(null, myFomoHistory));
+  var w    = canvas.width / 60;
+  var h    = canvas.height;
+  ctx.fillStyle = '#4cf';
+  for (var i = 0; i < myFomoHistory.length; i++) {
+    var barH = (myFomoHistory[i] / maxV) * (h - 4);
+    ctx.fillRect(i * w, h - barH, Math.max(1, w - 1), barH);
+  }
+  var lbl = document.getElementById('myDetectionChartLbl');
+  if (lbl) lbl.textContent = 'Last '+myFomoHistory.length+' frames · max='+maxV+' clusters';
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — FLASH FIRMWARE (esptool-js)
+  Section 1 — verbatim from reference
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function mySelFlash(mode) {
+  myFlashMode = mode;
+  document.getElementById('myOptA').classList.toggle('myFlashSel', mode==='A');
+  document.getElementById('myOptB').classList.toggle('myFlashSel', mode==='B');
+  document.getElementById('myInputsA').style.display = (mode==='A') ? 'block' : 'none';
+  document.getElementById('myInputsB').style.display = (mode==='B') ? 'block' : 'none';
+}
+
+async function myFlashFw() {
+  var sts = document.getElementById('myFlashSts');
+  var pw  = document.getElementById('myProgWrap');
+  var pb  = document.getElementById('myProgBar');
+  sts.textContent = 'Connecting...'; pw.style.display = 'block'; pb.style.width = '0%';
+  try {
+    var { ESPLoader, Transport } = await import('https://unpkg.com/esptool-js@0.5.7/bundle.js');
+    var port = await navigator.serial.requestPort();
+    var transport = new Transport(port, true);
+    var espLoader = new ESPLoader({transport, baudrate:921600, terminal:{clean:()=>{}, writeLine:(l)=>{sts.textContent=l;}, write:(d)=>{}}});
+    await espLoader.main();
+    var fileArray = [];
+    if (myFlashMode === 'A') {
+      var fEl = document.getElementById('myFSketch');
+      var addr = parseInt(document.getElementById('myASketch').value);
+      var data = fEl.files.length
+        ? await fEl.files[0].arrayBuffer()
+        : await (await fetch(myFlashSketchFile)).arrayBuffer();
+      fileArray.push({data:new Uint8Array(data), address:addr});
+    } else {
+      var fEl = document.getElementById('myFMerged');
+      var addr = parseInt(document.getElementById('myAMerged').value);
+      var data = fEl.files.length
+        ? await fEl.files[0].arrayBuffer()
+        : await (await fetch(myFlashMergedFile)).arrayBuffer();
+      fileArray.push({data:new Uint8Array(data), address:addr});
+    }
+    await espLoader.writeFlash({fileArray, flashSize:'keep', reportProgress(i,w,t){ pb.style.width=Math.round(w/t*100)+'%'; }});
+    sts.textContent = '✓ Flash complete — unplug and replug ESP32';
+    await espLoader.after();
+    await transport.disconnect();
+  } catch(e) { sts.textContent = 'Flash error: '+e.message; pb.style.width='0%'; }
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — VALIDATION SNAPSHOT
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+function myUpdateValBox() {
+  var pct   = parseInt(document.getElementById('myValidationPct').value) || 0;
+  var total = 0;
+  for (var i = 0; i < myNumClasses; i++) total += (myTrainData[i]||[]).length;
+  var valCount = Math.floor(total * pct / 100);
+  document.getElementById('myValBox').textContent =
+    pct+'% of '+total+' = ~'+valCount+' validation images';
+}
+
+function mySnapshotValidationImages() {
+  var pct = parseInt(document.getElementById('myValidationPct').value) || 5;
+  myValImages = {};
+  for (var i = 0; i < myNumClasses; i++) {
+    var arr = myTrainData[i] || [];
+    var n   = Math.max(1, Math.floor(arr.length * pct / 100));
+    myValImages[i] = arr.slice(-n);
+  }
+  var total = Object.values(myValImages).reduce(function(s,a){return s+a.length;},0);
+  myLog('Validation snapshot: '+total+' images ('+pct+'%)');
+}
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+  SCRIPT — WINDOW ONLOAD
+  Initialise dynamic rows, serial buttons, config textarea, chart ctx
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+window.addEventListener('load', function() {
+  myReinitClassData(2);
+  myRenderClassRows();
+  myRenderSerialButtons();
+  myRefreshConfigTextarea();
+  myUpdateResolutionHint();
+  myUpdateValBox();
+  // Init FOMO overlay canvas ref
+  myFomoOverlayCanvas = document.getElementById('myFomoOverlay');
+  myFomoOverlayCtx    = myFomoOverlayCanvas ? myFomoOverlayCanvas.getContext('2d') : null;
+  // Populate camera dropdown with a placeholder until permission granted
+  var sel = document.getElementById('myCameraSelect');
+  if (!sel.options.length) {
+    var opt = document.createElement('option'); opt.value = ''; opt.text = 'Webcam (default)'; sel.appendChild(opt);
+  }
+  myLog('FOMO WebSerial page ready — v016');
+});
+</script>
+
+</body>
+</html>
