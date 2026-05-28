@@ -15,5 +15,5 @@ https://webmcu-ai.github.io/webmcu-fomo/draft/web-fomo-index-v0#.html
 
 1.  
 1.   
-1. May 27, 2026 firmeware.ino and flash files made using firmware-fomo-for-web-v001.txt
+1. May 27, 2026 firmeware.ino and flash files made using firmware-fomo-for-web-v001.txt   ISSUE PSRAM FAIL
 
